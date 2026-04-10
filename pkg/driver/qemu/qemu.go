@@ -663,7 +663,6 @@ func Cmdline(ctx context.Context, cfg Config) (exe string, args []string, err er
 		virtioBlk = "virtio-blk-ccw"
 	}
 
-	args = append(args, "-device", "qemu-xhci,id=usb-bus")
 
 	isoPresent := osutil.FileExists(isoPath)
 	if osutil.FileExists(diskPath) {
@@ -913,6 +912,9 @@ func Cmdline(ctx context.Context, cfg Config) (exe string, args []string, err er
 		}
 		args = append(args, "-device", "virtio-keyboard-pci")
 		args = append(args, "-device", "virtio-"+input+"-pci")
+	} else if *y.USB {
+		// No display: suppress any machine-default VGA adapter.
+		args = append(args, "-vga", "none")
 	} else {
 		// Suppress any machine-default VGA adapter so the guest needs no VGA
 		// ROM. Only x86_64's q35/pc attach one (a std-vga needing
