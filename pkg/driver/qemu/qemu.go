@@ -872,6 +872,11 @@ func Cmdline(ctx context.Context, cfg Config) (exe string, args []string, err er
 		args = append(args, "-device", "virtio-keyboard-pci")
 		args = append(args, "-device", "virtio-"+input+"-pci")
 		args = append(args, "-device", "qemu-xhci,id=usb-bus")
+	} else if *y.USB {
+		// Add USB controller without display for USB device passthrough
+		args = append(args, "-device", "qemu-xhci,id=usb-bus")
+		// No display: suppress any machine-default VGA adapter.
+		args = append(args, "-vga", "none")
 	} else {
 		// Suppress any machine-default VGA adapter so the guest needs no VGA
 		// ROM. Only x86_64's q35/pc attach one (a std-vga needing
