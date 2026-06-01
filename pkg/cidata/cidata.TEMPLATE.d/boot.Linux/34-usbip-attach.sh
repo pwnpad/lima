@@ -9,6 +9,9 @@
 
 set -eu
 
+# USB/IP passthrough is a vz-only feature; the host USB/IP server is started by
+# the vz driver. qemu handles USB passthrough itself, so skip there.
+[ "${LIMA_CIDATA_VMTYPE}" = "vz" ] || exit 0
 [ "${LIMA_CIDATA_USB_DEVICES:-0}" -gt 0 ] || exit 0
 
 HOST_CID=2
