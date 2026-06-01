@@ -98,8 +98,31 @@ func mapSpeed(s gousb.Speed) uint32 {
 	}
 }
 
+// List enumerates the USB devices currently present on the host without
+// claiming them. The OpenDevices filter returns false for every device, so each
+// is inspected (via its descriptor) but never opened.
+func List() ([]DeviceInfo, error) {
+	gctx := gousb.NewContext()
+	defer gctx.Close()
+	var out []DeviceInfo
+	if _, err := gctx.OpenDevices(func(d *gousb.DeviceDesc) bool {
+		out = append(out, infoFromDesc(d)) // returning false: never opened
+		return false
+	}); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
 func buildInfo(dev *gousb.Device) DeviceInfo {
-	d := dev.Desc
+	info := infoFromDesc(dev.Desc)
+	if n, err := dev.ActiveConfigNum(); err == nil {
+		info.ConfigurationValue = uint8(n)
+	}
+	return info
+}
+
+func infoFromDesc(d *gousb.DeviceDesc) DeviceInfo {
 	info := DeviceInfo{
 		BusNum:            uint32(d.Bus),
 		DevNum:            uint32(d.Address),
@@ -113,9 +136,6 @@ func buildInfo(dev *gousb.Device) DeviceInfo {
 		SubClass:          uint8(d.SubClass),
 		Protocol:          uint8(d.Protocol),
 		NumConfigurations: uint8(len(d.Configs)),
-	}
-	if n, err := dev.ActiveConfigNum(); err == nil {
-		info.ConfigurationValue = uint8(n)
 	}
 	// Advertise the interfaces of the active (or first) configuration.
 	cfgNum := int(info.ConfigurationValue)
