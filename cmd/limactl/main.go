@@ -195,6 +195,7 @@ func newApp() *cobra.Command {
 		newEditCommand(),
 		newFactoryResetCommand(),
 		newDiskCommand(),
+		newUsbCommand(),
 		newUsernetCommand(),
 		newGenDocCommand(),
 		newGenSchemaCommand(),
