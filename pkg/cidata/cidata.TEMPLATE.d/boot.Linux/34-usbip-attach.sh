@@ -30,6 +30,8 @@ install_pkgs() {
 		dnf install -y socat usbip || true
 	elif command -v apk >/dev/null 2>&1; then
 		apk add socat usbip-tools || true
+	elif command -v pacman >/dev/null 2>&1; then
+		pacman -Sy --noconfirm usbip socat || true
 	else
 		echo >&2 "usbip: no supported package manager found; install socat and usbip manually"
 	fi
