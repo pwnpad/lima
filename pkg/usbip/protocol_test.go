@@ -5,7 +5,6 @@ package usbip
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"testing"
 
@@ -76,15 +75,15 @@ func TestWriteRetSubmitIn(t *testing.T) {
 }
 
 func TestDevlistWrite(t *testing.T) {
-	dev := &fakeDevice{info: DeviceInfo{
+	info := DeviceInfo{
 		Busid:             "20-3",
 		Vendor:            0x0bda,
 		Product:           0x8812,
 		NumConfigurations: 1,
 		Interfaces:        []InterfaceInfo{{Class: 0xff}},
-	}}
+	}
 	var out bytes.Buffer
-	assert.NilError(t, writeDevlist(&out, []Device{dev}))
+	assert.NilError(t, writeDevlist(&out, []DeviceInfo{info}))
 
 	b := out.Bytes()
 	// opHeader(8) + count(4) + usbDeviceDesc(312) + usbInterfaceDesc(4)
@@ -92,16 +91,3 @@ func TestDevlistWrite(t *testing.T) {
 	assert.Equal(t, binary.BigEndian.Uint16(b[2:]), uint16(opRepDevlist))
 	assert.Equal(t, binary.BigEndian.Uint32(b[8:]), uint32(1))
 }
-
-type fakeDevice struct {
-	info DeviceInfo
-}
-
-func (f *fakeDevice) Info() DeviceInfo { return f.info }
-func (f *fakeDevice) Control(context.Context, [8]byte, []byte) (int, error) {
-	return 0, nil
-}
-func (f *fakeDevice) Transfer(context.Context, uint8, bool, []byte) (int, error) {
-	return 0, nil
-}
-func (f *fakeDevice) Close() error { return nil }

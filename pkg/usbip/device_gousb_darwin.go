@@ -83,6 +83,70 @@ func Open(vendorID, productID uint16, busAddr string) (Device, error) {
 	return g, nil
 }
 
+// allowEntryFor converts a host DeviceInfo into the identity form used to match
+// against the allowlist (vendor/product hex plus busid for disambiguation).
+func allowEntryFor(info DeviceInfo) AllowEntry {
+	return AllowEntry{
+		VendorID:  fmt.Sprintf("%04x", info.Vendor),
+		ProductID: fmt.Sprintf("%04x", info.Product),
+		BusAddr:   info.Busid,
+	}
+}
+
+// allowlistProvider serves only the host devices permitted by the instance's
+// allowlist file, re-read on every call so live changes take effect without a
+// restart. It opens devices lazily, at import time.
+type allowlistProvider struct {
+	instDir string
+}
+
+// NewProvider returns a Provider backed by the instance's USB/IP allowlist file.
+func NewProvider(instDir string) Provider {
+	return &allowlistProvider{instDir: instDir}
+}
+
+func (p *allowlistProvider) Devices() ([]DeviceInfo, error) {
+	allow, err := ReadAllowlist(p.instDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(allow) == 0 {
+		return nil, nil
+	}
+	hosts, err := List()
+	if err != nil {
+		return nil, err
+	}
+	var out []DeviceInfo
+	for _, info := range hosts {
+		if Allowed(allow, allowEntryFor(info)) {
+			out = append(out, info)
+		}
+	}
+	return out, nil
+}
+
+func (p *allowlistProvider) Open(busid string) (Device, error) {
+	allow, err := ReadAllowlist(p.instDir)
+	if err != nil {
+		return nil, err
+	}
+	hosts, err := List()
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range hosts {
+		if info.Busid != busid {
+			continue
+		}
+		if !Allowed(allow, allowEntryFor(info)) {
+			return nil, fmt.Errorf("usb device %s not permitted by allowlist", busid)
+		}
+		return Open(info.Vendor, info.Product, info.Busid)
+	}
+	return nil, fmt.Errorf("usb device %s not found on host", busid)
+}
+
 func mapSpeed(s gousb.Speed) uint32 {
 	switch s {
 	case gousb.SpeedLow:

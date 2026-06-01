@@ -25,21 +25,26 @@ const (
 // against a malicious or buggy guest asking us to allocate unbounded memory.
 const maxTransferLength = 16 << 20 // 16 MiB
 
-// Serve handles one USB/IP client connection against the given devices. The
-// connection is expected to carry exactly one operation: a device list request
-// (answered with every device, then closed) or an import request (matched to a
-// device by busid, answered, then followed by the URB exchange that runs until
-// the connection closes or ctx is cancelled).
-func Serve(ctx context.Context, conn io.ReadWriter, devices []Device) error {
+// Serve handles one USB/IP client connection. The connection carries exactly
+// one operation: a device list request (answered with every currently
+// exportable device, then closed) or an import request (matched to a device by
+// busid, opened on demand, then followed by the URB exchange that runs until the
+// connection closes or ctx is cancelled). The provider is queried per call so
+// allowlist changes apply without restarting the server.
+func Serve(ctx context.Context, conn io.ReadWriter, p Provider) error {
 	op, err := readOpHeader(conn)
 	if err != nil {
 		return fmt.Errorf("reading op header: %w", err)
 	}
 	switch op.Code {
 	case opReqDevlist:
-		return writeDevlist(conn, devices)
+		infos, err := p.Devices()
+		if err != nil {
+			return fmt.Errorf("listing devices: %w", err)
+		}
+		return writeDevlist(conn, infos)
 	case opReqImport:
-		return handleImport(ctx, conn, devices)
+		return handleImport(ctx, conn, p)
 	default:
 		return fmt.Errorf("unsupported op code %#04x", op.Code)
 	}
@@ -64,15 +69,14 @@ func deviceDescWire(info DeviceInfo) usbDeviceDesc {
 	return d
 }
 
-func writeDevlist(conn io.Writer, devices []Device) error {
+func writeDevlist(conn io.Writer, infos []DeviceInfo) error {
 	if err := writeOpHeader(conn, opRepDevlist, 0); err != nil {
 		return err
 	}
-	if err := binary.Write(conn, binary.BigEndian, uint32(len(devices))); err != nil {
+	if err := binary.Write(conn, binary.BigEndian, uint32(len(infos))); err != nil {
 		return err
 	}
-	for _, dev := range devices {
-		info := dev.Info()
+	for _, info := range infos {
 		if err := binary.Write(conn, binary.BigEndian, deviceDescWire(info)); err != nil {
 			return err
 		}
@@ -89,23 +93,18 @@ func writeDevlist(conn io.Writer, devices []Device) error {
 	return nil
 }
 
-func handleImport(ctx context.Context, conn io.ReadWriter, devices []Device) error {
+func handleImport(ctx context.Context, conn io.ReadWriter, p Provider) error {
 	var busid [32]byte
 	if _, err := io.ReadFull(conn, busid[:]); err != nil {
 		return fmt.Errorf("reading import busid: %w", err)
 	}
 	requested := string(busid[:clen(busid[:])])
-	var dev Device
-	for _, d := range devices {
-		if d.Info().Busid == requested {
-			dev = d
-			break
-		}
-	}
-	if dev == nil {
-		logrus.Warnf("usbip: import for unknown busid %q", requested)
+	dev, err := p.Open(requested)
+	if err != nil {
+		logrus.WithError(err).Warnf("usbip: import for busid %q rejected", requested)
 		return writeOpHeader(conn, opRepImport, 1)
 	}
+	defer dev.Close()
 	if err := writeOpHeader(conn, opRepImport, 0); err != nil {
 		return err
 	}
