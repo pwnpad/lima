@@ -97,6 +97,7 @@ type TemplateArgs struct {
 	MountType                       string
 	Disks                           []Disk
 	USBDevices                      []USBDevice
+	USBEnabled                      bool
 	GuestInstallPrefix              string
 	UpgradePackages                 bool
 	Containerd                      Containerd
