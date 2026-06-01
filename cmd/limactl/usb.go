@@ -214,7 +214,7 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	out, err := runGuestCommand(ctx, inst, fmt.Sprintf("sudo usbip attach -r 127.0.0.1 -b %s", dev.Busid))
+	out, err := runGuestCommand(ctx, inst, fmt.Sprintf("sudo %s usbip attach --busid %s", guestAgentBin(inst), dev.Busid))
 	if err != nil {
 		return fmt.Errorf("usbip attach in guest failed: %w\n%s", err, out)
 	}
@@ -242,11 +242,7 @@ func usbDetachAction(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	port, err := guestPortFor(ctx, inst, dev.Vendor, dev.Product)
-	if err != nil {
-		return err
-	}
-	out, err := runGuestCommand(ctx, inst, fmt.Sprintf("sudo usbip detach -p %s", port))
+	out, err := runGuestCommand(ctx, inst, fmt.Sprintf("sudo %s usbip detach --vidpid %04x:%04x", guestAgentBin(inst), dev.Vendor, dev.Product))
 	if err != nil {
 		return fmt.Errorf("usbip detach in guest failed: %w\n%s", err, out)
 	}
@@ -343,32 +339,19 @@ func requireVZUSBInstance(ctx context.Context, name string) (*limatype.Instance,
 	return inst, nil
 }
 
-var usbPortRe = regexp.MustCompile(`(?m)^Port\s+(\d+):`)
-
-// guestPortFor resolves the vhci port number of an attached device by matching
-// its vid:pid in the `usbip port` output.
-func guestPortFor(ctx context.Context, inst *limatype.Instance, vendor, product uint16) (string, error) {
-	out, err := runGuestCommand(ctx, inst, "usbip port")
-	if err != nil {
-		return "", fmt.Errorf("usbip port in guest failed: %w\n%s", err, out)
+// guestAgentBin returns the absolute path to the guest agent binary inside the
+// instance, honoring the configured install prefix.
+func guestAgentBin(inst *limatype.Instance) string {
+	prefix := "/usr/local"
+	if inst.Config.GuestInstallPrefix != nil {
+		prefix = *inst.Config.GuestInstallPrefix
 	}
-	idTag := fmt.Sprintf("%04x:%04x", vendor, product)
-	lines := strings.Split(out, "\n")
-	curPort := ""
-	for _, line := range lines {
-		if m := usbPortRe.FindStringSubmatch(line); m != nil {
-			curPort = m[1]
-		}
-		if curPort != "" && strings.Contains(strings.ToLower(line), idTag) {
-			return curPort, nil
-		}
-	}
-	return "", fmt.Errorf("device %s is not attached in the guest", idTag)
+	return prefix + "/bin/lima-guestagent"
 }
 
 // guestAttached returns the set of "vid:pid" currently attached in the guest.
 func guestAttached(ctx context.Context, inst *limatype.Instance) (map[string]bool, error) {
-	out, err := runGuestCommand(ctx, inst, "usbip port")
+	out, err := runGuestCommand(ctx, inst, guestAgentBin(inst)+" usbip port")
 	if err != nil {
 		return nil, err
 	}
