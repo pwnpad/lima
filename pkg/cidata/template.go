@@ -88,6 +88,13 @@ type Disk struct {
 	FSType string
 	FSArgs []string
 }
+
+type USBDevice struct {
+	Name      string
+	VendorID  string
+	ProductID string
+	BusAddr   string
+}
 type TemplateArgs struct {
 	Debug                           bool
 	OS                              limatype.OS
@@ -105,6 +112,8 @@ type TemplateArgs struct {
 	Mounts                          []Mount
 	MountType                       string
 	Disks                           []Disk
+	USBDevices                      []USBDevice
+	USBEnabled                      bool
 	GuestInstallPrefix              string
 	UpgradePackages                 bool
 	Containerd                      Containerd

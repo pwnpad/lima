@@ -51,6 +51,26 @@ jobs:
       with:
         go-version: stable
         cache: false
+    - name: "Install libusb"
+      run: |
+        brew install libusb
+        # On Apple Silicon, build x86_64 libusb for cross-compilation.
+        # The Makefile's CGO_LDFLAGS points to /usr/local/lib for
+        # non-native GOARCH builds.
+        if [ "$(uname -m)" = "arm64" ]; then
+          LIBUSB_VERSION="1.0.27"
+          curl -fsSLO "https://github.com/libusb/libusb/releases/download/v${LIBUSB_VERSION}/libusb-${LIBUSB_VERSION}.tar.bz2"
+          tar xjf "libusb-${LIBUSB_VERSION}.tar.bz2"
+          cd "libusb-${LIBUSB_VERSION}"
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+          CFLAGS="-arch x86_64 -isysroot ${SDKROOT}" \
+          LDFLAGS="-arch x86_64" \
+            ./configure --disable-dependency-tracking --host=x86_64-apple-darwin --prefix=/usr/local
+          make -j"$(sysctl -n hw.ncpu)"
+          sudo make install
+          cd ..
+          rm -rf "libusb-${LIBUSB_VERSION}"*
+        fi
     - name: Make darwin artifacts
       run: make artifacts-darwin
     - name: "Upload artifacts"

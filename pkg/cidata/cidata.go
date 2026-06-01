@@ -274,6 +274,16 @@ func templateArgs(ctx context.Context, bootScripts bool, instDir, name string, i
 		})
 	}
 
+	args.USBEnabled = instConfig.USB != nil && *instConfig.USB
+	for _, d := range instConfig.USBDevices {
+		args.USBDevices = append(args.USBDevices, USBDevice{
+			Name:      d.Name,
+			VendorID:  d.VendorID,
+			ProductID: d.ProductID,
+			BusAddr:   d.BusAddr,
+		})
+	}
+
 	args.Networks = append(args.Networks, Network{MACAddress: limayaml.MACAddress(instDir), Interface: networks.SlirpNICName, Metric: 200})
 	for i, nw := range instConfig.Networks {
 		if i == firstUsernetIndex {

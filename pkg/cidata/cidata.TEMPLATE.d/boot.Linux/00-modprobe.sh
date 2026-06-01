@@ -23,3 +23,11 @@ for f in \
 		echo >&2 "Failed to load \"$f\" (negligible if it is built-in the kernel)"
 	fi
 done
+
+# vhci-hcd is the virtual USB host controller for USB/IP import.
+if [ "${LIMA_CIDATA_VMTYPE}" = "vz" ] && { [ "${LIMA_CIDATA_USB_ENABLED:-0}" = "1" ] || [ "${LIMA_CIDATA_USB_DEVICES:-0}" -gt 0 ]; }; then
+	echo "Loading kernel module \"vhci-hcd\""
+	if ! modprobe vhci-hcd; then
+		echo >&2 "Failed to load \"vhci-hcd\" (negligible if it is built-in the kernel)"
+	fi
+fi

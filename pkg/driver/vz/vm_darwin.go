@@ -48,8 +48,9 @@ const diskImageCachingMode = vz.DiskImageCachingModeCached
 
 type virtualMachineWrapper struct {
 	*vz.VirtualMachine
-	mu      sync.Mutex
-	stopped bool
+	mu          sync.Mutex
+	stopped     bool
+	usbipCancel context.CancelFunc
 }
 
 // Hold all *os.File created via socketpair() so that they won't get garbage collected. f.FD() gets invalid if f gets garbage collected.
@@ -103,6 +104,10 @@ func startVM(ctx context.Context, inst *limatype.Instance, sshLocalPort int, onV
 						sendErrCh <- err
 					}
 					logrus.Info("[VZ] - vm state change: running")
+
+					if err := wrapper.startUSBIPServer(ctx, inst); err != nil {
+						logrus.WithError(err).Warn("Failed to start USB/IP passthrough server")
+					}
 
 					go func() {
 						defer close(notifySSHLocalPortAccessible)
@@ -160,7 +165,11 @@ func startVM(ctx context.Context, inst *limatype.Instance, sshLocalPort int, onV
 					logrus.Info("[VZ] - vm state change: stopped")
 					wrapper.mu.Lock()
 					wrapper.stopped = true
+					usbipCancel := wrapper.usbipCancel
 					wrapper.mu.Unlock()
+					if usbipCancel != nil {
+						usbipCancel()
+					}
 					_ = usernetClient.UnExposeSSH(inst.SSHLocalPort)
 					if stopUsernet != nil {
 						stopUsernet()

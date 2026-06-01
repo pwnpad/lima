@@ -71,6 +71,7 @@ const (
 	VzEfi                   = "vz-efi"           // efi variable store
 	QemuEfiCodeFD           = "qemu-efi-code.fd" // efi code; not always created
 	AnsibleInventoryYAML    = "ansible-inventory.yaml"
+	USBIPAllowlist          = "usbip-allow.json" // vz USB/IP passthrough allowlist
 
 	// SocketDir is the default location for forwarded sockets with a relative paths in HostSocket.
 	SocketDir = "sock"
