@@ -47,6 +47,14 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 		return fmt.Errorf("listening on vsock port %d: %w", usbipVsockPort, err)
 	}
 
+	// Tie the server lifetime to a cancelable context so the VM stop handler can
+	// release the vsock listener and any open host USB device handles before the
+	// driver process exits (graceful teardown rather than relying on exit alone).
+	ctx, cancel := context.WithCancel(ctx)
+	m.mu.Lock()
+	m.usbipCancel = cancel
+	m.mu.Unlock()
+
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -64,6 +72,12 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 			}
 			go func() {
 				defer conn.Close()
+				// Close the conn on cancel so a session blocked reading URBs
+				// unblocks and releases its host USB device handle.
+				go func() {
+					<-ctx.Done()
+					_ = conn.Close()
+				}()
 				if err := usbip.Serve(ctx, conn, provider); err != nil {
 					logrus.WithError(err).Debug("usbip: session ended")
 				}
