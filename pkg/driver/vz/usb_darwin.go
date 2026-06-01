@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 
 	"github.com/sirupsen/logrus"
 
@@ -23,53 +22,34 @@ import (
 // cidata usbip boot script).
 const usbipVsockPort = 2223
 
-// startUSBIPServer opens the configured host USB devices and serves them to the
-// guest over vsock using the USB/IP protocol. It is a no-op when no usbDevices
-// are configured. The server and opened devices are torn down when ctx ends.
+// startUSBIPServer serves host USB devices to the guest over vsock using the
+// USB/IP protocol. It runs whenever vz USB is enabled (usb: true) or any
+// usbDevices are configured, so a later live attach has transport ready. The
+// exportable set is the instance allowlist file, re-read per request and opened
+// lazily at import time; usbDevices seeds that file at start.
 func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *limatype.Instance) error {
-	if len(inst.Config.USBDevices) == 0 {
+	enabled := (inst.Config.USB != nil && *inst.Config.USB) || len(inst.Config.USBDevices) > 0
+	if !enabled {
 		return nil
 	}
 
-	var devices []usbip.Device
-	for _, d := range inst.Config.USBDevices {
-		vid, err := strconv.ParseUint(d.VendorID, 16, 16)
-		if err != nil {
-			logrus.WithError(err).Warnf("usbip: invalid vendorID %q, skipping", d.VendorID)
-			continue
-		}
-		pid, err := strconv.ParseUint(d.ProductID, 16, 16)
-		if err != nil {
-			logrus.WithError(err).Warnf("usbip: invalid productID %q, skipping", d.ProductID)
-			continue
-		}
-		dev, err := usbip.Open(uint16(vid), uint16(pid), d.BusAddr)
-		if err != nil {
-			logrus.WithError(err).Warnf("usbip: failed to open device %s:%s, skipping", d.VendorID, d.ProductID)
-			continue
-		}
-		logrus.Infof("usbip: opened host USB device %s:%s (%s)", d.VendorID, d.ProductID, dev.Info().Busid)
-		devices = append(devices, dev)
+	if err := seedAllowlist(inst); err != nil {
+		return fmt.Errorf("seeding usbip allowlist: %w", err)
 	}
-	if len(devices) == 0 {
-		return errors.New("no configured USB devices could be opened for passthrough")
-	}
+	provider := usbip.NewProvider(inst.Dir)
 
 	socketDevices := m.SocketDevices()
 	if len(socketDevices) == 0 {
-		closeDevices(devices)
 		return errors.New("no vsock device available for USB/IP passthrough")
 	}
 	listener, err := socketDevices[0].Listen(usbipVsockPort)
 	if err != nil {
-		closeDevices(devices)
 		return fmt.Errorf("listening on vsock port %d: %w", usbipVsockPort, err)
 	}
 
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
-		closeDevices(devices)
 	}()
 
 	go func() {
@@ -84,19 +64,35 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 			}
 			go func() {
 				defer conn.Close()
-				if err := usbip.Serve(ctx, conn, devices); err != nil {
+				if err := usbip.Serve(ctx, conn, provider); err != nil {
 					logrus.WithError(err).Debug("usbip: session ended")
 				}
 			}()
 		}
 	}()
 
-	logrus.Infof("usbip: serving %d USB device(s) on vsock port %d", len(devices), usbipVsockPort)
+	logrus.Infof("usbip: serving allowlisted USB devices on vsock port %d", usbipVsockPort)
 	return nil
 }
 
-func closeDevices(devices []usbip.Device) {
-	for _, d := range devices {
-		_ = d.Close()
+// seedAllowlist merges the YAML usbDevices into the instance allowlist file so
+// configured devices are exportable from boot. Live attaches append to the same
+// file later. Existing entries (e.g. from a prior live attach) are preserved.
+func seedAllowlist(inst *limatype.Instance) error {
+	if len(inst.Config.USBDevices) == 0 {
+		return nil
 	}
+	list, err := usbip.ReadAllowlist(inst.Dir)
+	if err != nil {
+		return err
+	}
+	for _, d := range inst.Config.USBDevices {
+		list = usbip.AddEntry(list, usbip.AllowEntry{
+			Name:      d.Name,
+			VendorID:  d.VendorID,
+			ProductID: d.ProductID,
+			BusAddr:   d.BusAddr,
+		})
+	}
+	return usbip.WriteAllowlist(inst.Dir, list)
 }

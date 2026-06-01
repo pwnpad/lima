@@ -51,3 +51,14 @@ type Device interface {
 	// Close releases the device and any claimed interfaces.
 	Close() error
 }
+
+// Provider supplies the set of devices a single USB/IP session may see. It is
+// consulted per connection so runtime changes to the allowlist take effect
+// without restarting the server.
+type Provider interface {
+	// Devices returns the devices currently exportable to the guest (present on
+	// the host and permitted by the allowlist).
+	Devices() ([]DeviceInfo, error)
+	// Open opens the exportable device identified by busid for one session.
+	Open(busid string) (Device, error)
+}
