@@ -298,6 +298,8 @@ func TestFillDefault(t *testing.T) {
 
 	expect.NestedVirtualization = ptr.Of(false)
 
+	expect.USB = ptr.Of(false)
+
 	FillDefault(t.Context(), &y, &limatype.LimaYAML{}, &limatype.LimaYAML{}, filePath, false)
 	assert.DeepEqual(t, &y, &expect, opts...)
 
@@ -460,6 +462,8 @@ func TestFillDefault(t *testing.T) {
 	}
 
 	expect.Plain = ptr.Of(false)
+
+	expect.USB = ptr.Of(false)
 
 	y = limatype.LimaYAML{}
 	FillDefault(t.Context(), &y, &d, &limatype.LimaYAML{}, filePath, false)
@@ -658,6 +662,8 @@ func TestFillDefault(t *testing.T) {
 	y = filledDefaults
 
 	expect = o
+
+	expect.USB = ptr.Of(false)
 
 	expect.Provision = slices.Concat(o.Provision, y.Provision, dExpected.Provision)
 	expect.Probes = slices.Concat(o.Probes, y.Probes, dExpected.Probes)
