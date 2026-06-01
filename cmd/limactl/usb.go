@@ -94,44 +94,72 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("enumerating host USB devices: %w", err)
 	}
 
-	var (
-		allow    []usbip.AllowEntry
-		attached map[string]bool
-	)
-	if len(args) > 0 {
-		ctx := cmd.Context()
-		inst, err := requireVZUSBInstance(ctx, args[0])
-		if err != nil {
-			return err
-		}
-		if allow, err = usbip.ReadAllowlist(inst.Dir); err != nil {
-			return err
-		}
-		if attached, err = guestAttached(ctx, inst); err != nil {
-			logrus.WithError(err).Debug("usb: could not query guest attach state")
-		}
+	ctx := cmd.Context()
+	// attachedTo maps "vid:pid" -> the instance that currently has the device
+	// imported; names maps it -> the friendly name from that instance's allowlist.
+	attachedTo, names, err := usbAttachments(ctx, args)
+	if err != nil {
+		return err
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 4, 8, 4, ' ', 0)
-	fmt.Fprintln(w, "BUSID\tVID:PID\tVENDOR\tPRODUCT\tNAME\tALLOWED\tATTACHED")
+	fmt.Fprintln(w, "BUSID\tVID:PID\tVENDOR\tPRODUCT\tNAME\tATTACHED TO")
 	for _, h := range hosts {
-		entry := usbip.AllowEntry{
-			VendorID:  fmt.Sprintf("%04x", h.Vendor),
-			ProductID: fmt.Sprintf("%04x", h.Product),
-			BusAddr:   h.Busid,
-		}
-		allowed := "-"
-		att := "-"
-		name := ""
-		if len(args) > 0 {
-			allowed = boolMark(usbip.Allowed(allow, entry))
-			att = boolMark(attached[strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))])
-			name = allowlistName(allow, entry)
-		}
-		fmt.Fprintf(w, "%s\t%04x:%04x\t%s\t%s\t%s\t%s\t%s\n",
-			h.Busid, h.Vendor, h.Product, dashIfEmpty(h.VendorName), dashIfEmpty(h.ProductName), name, allowed, att)
+		key := strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))
+		fmt.Fprintf(w, "%s\t%04x:%04x\t%s\t%s\t%s\t%s\n",
+			h.Busid, h.Vendor, h.Product,
+			dashIfEmpty(h.VendorName), dashIfEmpty(h.ProductName),
+			dashIfEmpty(names[key]), dashIfEmpty(attachedTo[key]))
 	}
 	return w.Flush()
+}
+
+// usbAttachments scans the candidate instances (a single one when args names it,
+// otherwise every instance) and returns, keyed by lowercase "vid:pid", the
+// instance currently holding each device and its friendly name from that
+// instance's allowlist.
+func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[string]string, err error) {
+	attachedTo = map[string]string{}
+	names = map[string]string{}
+
+	var candidates []string
+	if len(args) > 0 {
+		candidates = []string{args[0]}
+	} else if candidates, err = store.Instances(); err != nil {
+		return nil, nil, fmt.Errorf("listing instances: %w", err)
+	}
+
+	for _, name := range candidates {
+		inst, err := store.Inspect(ctx, name)
+		if err != nil {
+			logrus.WithError(err).Debugf("usb: could not inspect instance %q", name)
+			continue
+		}
+		if !isVZUSBRunning(inst) {
+			continue
+		}
+		attached, err := guestAttached(ctx, inst)
+		if err != nil {
+			logrus.WithError(err).Debugf("usb: could not query attach state of %q", inst.Name)
+			continue
+		}
+		allow, err := usbip.ReadAllowlist(inst.Dir)
+		if err != nil {
+			logrus.WithError(err).Debugf("usb: could not read allowlist of %q", inst.Name)
+		}
+		for key := range attached {
+			if _, seen := attachedTo[key]; seen {
+				continue // first match wins; a device attaches to one VM
+			}
+			attachedTo[key] = inst.Name
+			vid, pid, ok := strings.Cut(key, ":")
+			if !ok {
+				continue
+			}
+			names[key] = allowlistName(allow, usbip.AllowEntry{VendorID: vid, ProductID: pid})
+		}
+	}
+	return attachedTo, names, nil
 }
 
 func allowlistName(list []usbip.AllowEntry, dev usbip.AllowEntry) string {
@@ -148,13 +176,6 @@ func dashIfEmpty(s string) string {
 		return "-"
 	}
 	return s
-}
-
-func boolMark(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
 }
 
 func usbAttachAction(cmd *cobra.Command, args []string) error {
@@ -292,6 +313,16 @@ func resolveHostDevice(busid, vendor, product, busAddr string) (usbip.DeviceInfo
 	default:
 		return usbip.DeviceInfo{}, fmt.Errorf("multiple %04x:%04x devices on host; disambiguate with --bus-addr", vid, pid)
 	}
+}
+
+// isVZUSBRunning reports whether the instance is a running vz instance with USB
+// passthrough enabled — the precondition for any live USB operation.
+func isVZUSBRunning(inst *limatype.Instance) bool {
+	if inst.Config.VMType == nil || *inst.Config.VMType != limatype.VZ {
+		return false
+	}
+	enabled := (inst.Config.USB != nil && *inst.Config.USB) || len(inst.Config.USBDevices) > 0
+	return enabled && inst.Status == limatype.StatusRunning
 }
 
 func requireVZUSBInstance(ctx context.Context, name string) (*limatype.Instance, error) {
