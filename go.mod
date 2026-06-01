@@ -23,6 +23,7 @@ require (
 	github.com/foxcpp/go-mockdns v1.2.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/go-cmp v0.7.0
+	github.com/google/gousb v1.1.3 // gomodjail:unconfined
 	github.com/google/yamlfmt v0.21.0
 	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048
 	github.com/invopop/jsonschema v0.14.0
