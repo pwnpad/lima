@@ -323,6 +323,8 @@ func FillDefault(ctx context.Context, y, d, o *limatype.LimaYAML, filePath strin
 		y.USB = ptr.Of(false)
 	}
 
+	y.USBDevices = slices.Concat(o.USBDevices, y.USBDevices, d.USBDevices)
+
 	if y.Firmware.LegacyBIOS == nil {
 		y.Firmware.LegacyBIOS = d.Firmware.LegacyBIOS
 	}
