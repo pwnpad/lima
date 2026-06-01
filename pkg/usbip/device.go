@@ -15,6 +15,8 @@ type DeviceInfo struct {
 	Speed              uint32
 	Vendor             uint16
 	Product            uint16
+	VendorName         string
+	ProductName        string
 	BcdDevice          uint16
 	Class              uint8
 	SubClass           uint8
