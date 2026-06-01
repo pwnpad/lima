@@ -270,6 +270,7 @@ func templateArgs(ctx context.Context, bootScripts bool, instDir, name string, i
 		})
 	}
 
+	args.USBEnabled = instConfig.USB != nil && *instConfig.USB
 	for _, d := range instConfig.USBDevices {
 		args.USBDevices = append(args.USBDevices, USBDevice{
 			Name:      d.Name,
