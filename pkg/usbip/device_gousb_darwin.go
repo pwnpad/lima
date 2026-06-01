@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/google/gousb"
-	"github.com/sirupsen/logrus"
 )
 
 // USB/IP speed codes (see linux/usbip.h: enum usb_device_speed mapping).
@@ -67,10 +66,13 @@ func Open(vendorID, productID uint16, busAddr string) (Device, error) {
 		_ = extra.Close()
 	}
 
-	// Detach any macOS kernel driver when we claim interfaces.
-	if err := dev.SetAutoDetach(true); err != nil {
-		logrus.WithError(err).Debug("usbip: SetAutoDetach failed (continuing)")
-	}
+	// Do NOT enable gousb autodetach: on macOS libusb_detach_kernel_driver
+	// triggers a whole-device IOKit capture that needs root or the
+	// com.apple.vm.device-access entitlement, and gousb's Config() detaches
+	// every interface unconditionally. Driverless devices (no kernel driver
+	// bound to their interfaces) can be claimed without it; devices that a
+	// macOS driver holds will fail claim with LIBUSB_ERROR_BUSY and need a
+	// privileged host server.
 
 	g := &gousbDevice{
 		gctx:   gctx,
