@@ -3,73 +3,26 @@
 # SPDX-FileCopyrightText: Copyright The Lima Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Import host USB devices exported by the limactl USB/IP server. The host
-# serves the devices over vsock (host CID 2, port 2223); the stock usbip
-# client only speaks TCP, so socat bridges a local TCP port to the vsock.
+# Import host USB devices exported by the limactl USB/IP server. The guest agent
+# speaks the USB/IP protocol directly to the host over vsock (host CID 2, port
+# 2223) and hands the connected socket to vhci-hcd, so no usbip/socat packages
+# are needed in the guest — only the vhci-hcd kernel module.
 
 set -eu
 
 # USB/IP passthrough is a vz-only feature; the host USB/IP server is started by
 # the vz driver. qemu handles USB passthrough itself, so skip there.
 [ "${LIMA_CIDATA_VMTYPE}" = "vz" ] || exit 0
-# Bring the bridge up whenever vz USB is enabled (usb: true) or any devices are
-# configured, so a later live `limactl usb attach` has transport ready.
+# Run whenever vz USB is enabled (usb: true) or any devices are configured, so a
+# later live `limactl usb attach` has vhci-hcd ready.
 { [ "${LIMA_CIDATA_USB_ENABLED:-0}" = "1" ] || [ "${LIMA_CIDATA_USB_DEVICES:-0}" -gt 0 ]; } || exit 0
-
-HOST_CID=2
-VSOCK_PORT=2223
-TCP_PORT=3240
-
-install_pkgs() {
-	if command -v apt-get >/dev/null 2>&1; then
-		DEBIAN_FRONTEND=noninteractive
-		export DEBIAN_FRONTEND
-		apt-get update
-		apt-get install -y --no-install-recommends socat usbip "linux-modules-extra-$(uname -r)" || true
-	elif command -v dnf >/dev/null 2>&1; then
-		dnf install -y socat usbip || true
-	elif command -v apk >/dev/null 2>&1; then
-		apk add socat usbip-tools || true
-	elif command -v pacman >/dev/null 2>&1; then
-		pacman -Sy --noconfirm usbip socat || true
-	else
-		echo >&2 "usbip: no supported package manager found; install socat and usbip manually"
-	fi
-}
-
-if ! command -v socat >/dev/null 2>&1 || ! command -v usbip >/dev/null 2>&1; then
-	install_pkgs
-fi
-
-if ! command -v socat >/dev/null 2>&1 || ! command -v usbip >/dev/null 2>&1; then
-	echo >&2 "usbip: socat and/or usbip still missing, skipping USB passthrough"
-	exit 0
-fi
 
 modprobe vhci-hcd 2>/dev/null || true
 
-# Start the TCP<->vsock bridge once.
-if ! pgrep -f "TCP-LISTEN:${TCP_PORT}.*VSOCK-CONNECT:${HOST_CID}:${VSOCK_PORT}" >/dev/null 2>&1; then
-	socat "TCP-LISTEN:${TCP_PORT},fork,reuseaddr" "VSOCK-CONNECT:${HOST_CID}:${VSOCK_PORT}" &
+# Auto-attach any devices already advertised by the host (allowlist/usbDevices).
+# Best effort: the agent may not be installed yet this early in boot; live
+# `limactl usb attach` works regardless once it is.
+GA="$(command -v lima-guestagent || echo "${LIMA_CIDATA_GUEST_INSTALL_PREFIX:-/usr/local}/bin/lima-guestagent")"
+if [ -x "${GA}" ]; then
+	"${GA}" usbip attach --all || echo >&2 "usbip: auto-attach failed (negligible if no devices are allowlisted)"
 fi
-
-# Wait for the bridge and server to answer a device list request.
-for _ in $(seq 1 15); do
-	if usbip list -r 127.0.0.1 >/dev/null 2>&1; then
-		break
-	fi
-	sleep 1
-done
-
-busids=$(usbip list -pr 127.0.0.1 2>/dev/null | sed -n 's/^busid=\([^#]*\)#.*/\1/p')
-if [ -z "${busids}" ]; then
-	echo >&2 "usbip: no exportable devices found on the host server"
-	exit 0
-fi
-
-for b in ${busids}; do
-	echo "usbip: attaching ${b}"
-	if ! usbip attach -r 127.0.0.1 -b "${b}"; then
-		echo >&2 "usbip: failed to attach ${b}"
-	fi
-done
