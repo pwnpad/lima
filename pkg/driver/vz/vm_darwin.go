@@ -104,6 +104,10 @@ func startVM(ctx context.Context, inst *limatype.Instance, sshLocalPort int, onV
 					}
 					logrus.Info("[VZ] - vm state change: running")
 
+					if err := wrapper.startUSBIPServer(ctx, inst); err != nil {
+						logrus.WithError(err).Warn("Failed to start USB/IP passthrough server")
+					}
+
 					go func() {
 						defer close(notifySSHLocalPortAccessible)
 						usernetSSHLocalPort := sshLocalPort

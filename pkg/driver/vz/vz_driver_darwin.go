@@ -76,6 +76,7 @@ var knownYamlProperties = []string{
 	"SSH",
 	"TimeZone",
 	"UpgradePackages",
+	"USBDevices",
 	"User",
 	"Video",
 	"VMType",
