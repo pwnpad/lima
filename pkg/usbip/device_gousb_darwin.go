@@ -180,6 +180,30 @@ func List() ([]DeviceInfo, error) {
 	return out, nil
 }
 
+// ListNamed enumerates host USB devices like List, additionally filling
+// VendorName/ProductName from the iManufacturer/iProduct string descriptors.
+// Reading those descriptors requires opening the device handle (no interface
+// claim, so no privilege); devices that fail to open or lack the strings keep
+// empty names.
+func ListNamed() ([]DeviceInfo, error) {
+	gctx := gousb.NewContext()
+	defer gctx.Close()
+	var out []DeviceInfo
+	devs, err := gctx.OpenDevices(func(*gousb.DeviceDesc) bool { return true })
+	for _, d := range devs {
+		info := buildInfo(d)
+		if s, e := d.Manufacturer(); e == nil {
+			info.VendorName = s
+		}
+		if s, e := d.Product(); e == nil {
+			info.ProductName = s
+		}
+		out = append(out, info)
+		_ = d.Close()
+	}
+	return out, err
+}
+
 func buildInfo(dev *gousb.Device) DeviceInfo {
 	info := infoFromDesc(dev.Desc)
 	if n, err := dev.ActiveConfigNum(); err == nil {

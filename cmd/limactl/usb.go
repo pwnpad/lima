@@ -89,7 +89,7 @@ func newUsbDetachCommand() *cobra.Command {
 }
 
 func usbListAction(cmd *cobra.Command, args []string) error {
-	hosts, err := usbip.List()
+	hosts, err := usbip.ListNamed()
 	if err != nil {
 		return fmt.Errorf("enumerating host USB devices: %w", err)
 	}
@@ -113,7 +113,7 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 4, 8, 4, ' ', 0)
-	fmt.Fprintln(w, "BUSID\tVID:PID\tNAME\tALLOWED\tATTACHED")
+	fmt.Fprintln(w, "BUSID\tVID:PID\tVENDOR\tPRODUCT\tNAME\tALLOWED\tATTACHED")
 	for _, h := range hosts {
 		entry := usbip.AllowEntry{
 			VendorID:  fmt.Sprintf("%04x", h.Vendor),
@@ -128,7 +128,8 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 			att = boolMark(attached[strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))])
 			name = allowlistName(allow, entry)
 		}
-		fmt.Fprintf(w, "%s\t%04x:%04x\t%s\t%s\t%s\n", h.Busid, h.Vendor, h.Product, name, allowed, att)
+		fmt.Fprintf(w, "%s\t%04x:%04x\t%s\t%s\t%s\t%s\t%s\n",
+			h.Busid, h.Vendor, h.Product, dashIfEmpty(h.VendorName), dashIfEmpty(h.ProductName), name, allowed, att)
 	}
 	return w.Flush()
 }
@@ -140,6 +141,13 @@ func allowlistName(list []usbip.AllowEntry, dev usbip.AllowEntry) string {
 		}
 	}
 	return ""
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func boolMark(b bool) string {
