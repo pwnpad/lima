@@ -36,6 +36,7 @@ type LimaYAML struct {
 	Audio                 Audio         `yaml:"audio,omitempty" json:"audio,omitempty"`
 	Video                 Video         `yaml:"video,omitempty" json:"video,omitempty"`
 	USB                   *bool         `yaml:"usb,omitempty" json:"usb,omitempty" jsonschema:"nullable"`
+	USBDevices            []USBDevice   `yaml:"usbDevices,omitempty" json:"usbDevices,omitempty" jsonschema:"nullable"`
 	Provision             []Provision   `yaml:"provision,omitempty" json:"provision,omitempty"`
 	UpgradePackages       *bool         `yaml:"upgradePackages,omitempty" json:"upgradePackages,omitempty" jsonschema:"nullable"`
 	Containerd            Containerd    `yaml:"containerd,omitempty" json:"containerd,omitempty"`
@@ -222,6 +223,20 @@ type Audio struct {
 
 type VNCOptions struct {
 	Display *string `yaml:"display,omitempty" json:"display,omitempty" jsonschema:"nullable"`
+}
+
+// USBDevice selects a physical host USB device to pass through to the guest.
+// Passthrough is implemented over USB/IP and is currently only wired up for the vz driver.
+type USBDevice struct {
+	// Name is an optional human-readable label, used only for logs.
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
+	// VendorID is the 16-bit USB vendor ID in hex, e.g. "0bda".
+	VendorID string `yaml:"vendorID" json:"vendorID"`
+	// ProductID is the 16-bit USB product ID in hex, e.g. "8812".
+	ProductID string `yaml:"productID" json:"productID"`
+	// BusAddr optionally disambiguates between multiple devices with the same
+	// vendor/product ID, in the form "<bus>-<address>", e.g. "20-3".
+	BusAddr string `yaml:"busAddr,omitempty" json:"busAddr,omitempty"`
 }
 
 type Video struct {
