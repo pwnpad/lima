@@ -105,19 +105,24 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 4, 8, 4, ' ', 0)
 	fmt.Fprintln(w, "BUSID\tVID:PID\tVENDOR\tPRODUCT\tNAME\tATTACHED TO")
 	for _, h := range hosts {
-		key := strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))
+		at, nm := attachedTo[h.Busid], names[h.Busid]
+		if at == "" { // tolerate imports that predate host-busid reporting
+			vidpid := strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))
+			at, nm = attachedTo[vidpid], names[vidpid]
+		}
 		fmt.Fprintf(w, "%s\t%04x:%04x\t%s\t%s\t%s\t%s\n",
 			h.Busid, h.Vendor, h.Product,
 			dashIfEmpty(h.VendorName), dashIfEmpty(h.ProductName),
-			dashIfEmpty(names[key]), dashIfEmpty(attachedTo[key]))
+			dashIfEmpty(nm), dashIfEmpty(at))
 	}
 	return w.Flush()
 }
 
 // usbAttachments scans the candidate instances (a single one when args names it,
-// otherwise every instance) and returns, keyed by lowercase "vid:pid", the
-// instance currently holding each device and its friendly name from that
-// instance's allowlist.
+// otherwise every instance) and returns, keyed by host busid, the instance
+// currently holding each device and its friendly name from that instance's
+// allowlist. Keying by busid (rather than vid:pid) lets identical devices be
+// told apart.
 func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[string]string, err error) {
 	attachedTo = map[string]string{}
 	names = map[string]string{}
@@ -138,7 +143,7 @@ func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[s
 		if !isVZUSBRunning(inst) {
 			continue
 		}
-		attached, err := guestAttached(ctx, inst)
+		attached, err := guestAttachedDevices(ctx, inst)
 		if err != nil {
 			logrus.WithError(err).Debugf("usb: could not query attach state of %q", inst.Name)
 			continue
@@ -147,16 +152,21 @@ func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[s
 		if err != nil {
 			logrus.WithError(err).Debugf("usb: could not read allowlist of %q", inst.Name)
 		}
-		for key := range attached {
-			if _, seen := attachedTo[key]; seen {
-				continue // first match wins; a device attaches to one VM
+		for busid, vidpid := range attached {
+			if _, seen := attachedTo[busid]; seen {
+				continue // first match wins; a physical device attaches to one VM
 			}
-			attachedTo[key] = inst.Name
-			vid, pid, ok := strings.Cut(key, ":")
+			attachedTo[busid] = inst.Name
+			vid, pid, ok := strings.Cut(vidpid, ":")
 			if !ok {
 				continue
 			}
-			names[key] = allowlistName(allow, usbip.AllowEntry{VendorID: vid, ProductID: pid})
+			dev := usbip.AllowEntry{VendorID: vid, ProductID: pid}
+			if busid != vidpid { // a real busid, not the vid:pid fallback
+				dev.BusAddr = busid
+				dev.Busid = busid
+			}
+			names[busid] = allowlistName(allow, dev)
 		}
 	}
 	return attachedTo, names, nil
@@ -349,18 +359,34 @@ func guestAgentBin(inst *limatype.Instance) string {
 	return prefix + "/bin/lima-guestagent"
 }
 
-// guestAttached returns the set of "vid:pid" currently attached in the guest.
-func guestAttached(ctx context.Context, inst *limatype.Instance) (map[string]bool, error) {
+// guestAttachedDevices returns, keyed by host busid, the "vid:pid" of every
+// device currently imported in the guest (the guest agent's `usbip port` prints
+// "vid:pid busid" per line). Lines that predate host-busid reporting carry no
+// busid and are keyed by their vid:pid instead, so they still surface.
+func guestAttachedDevices(ctx context.Context, inst *limatype.Instance) (map[string]string, error) {
 	out, err := runGuestCommand(ctx, inst, guestAgentBin(inst)+" usbip port")
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`([0-9a-fA-F]{4}):([0-9a-fA-F]{4})`)
-	set := map[string]bool{}
-	for _, m := range re.FindAllStringSubmatch(out, -1) {
-		set[strings.ToLower(m[1]+":"+m[2])] = true
+	vidpidRe := regexp.MustCompile(`^([0-9a-fA-F]{4}):([0-9a-fA-F]{4})$`)
+	byBusid := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		m := vidpidRe.FindStringSubmatch(fields[0])
+		if m == nil {
+			continue
+		}
+		vidpid := strings.ToLower(m[1] + ":" + m[2])
+		busid := vidpid
+		if len(fields) > 1 {
+			busid = fields[1]
+		}
+		byBusid[busid] = vidpid
 	}
-	return set, nil
+	return byBusid, nil
 }
 
 func usbBashComplete(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
