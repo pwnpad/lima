@@ -119,16 +119,120 @@ type inflight struct {
 	unlinked bool
 }
 
+// urbJob is a single CMD_SUBMIT routed to its endpoint's worker goroutine.
+type urbJob struct {
+	ctx     context.Context
+	h       urbHeader
+	outData []byte
+	entry   *inflight
+}
+
+// epQueue is an unbounded FIFO of URB jobs for one endpoint. It is unbounded on
+// purpose: the reader must never block enqueuing, because it has to stay free to
+// read a CMD_UNLINK that cancels a worker currently blocked in an IN transfer. A
+// bounded channel would deadlock if more URBs were queued than its capacity.
+type epQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	jobs   []*urbJob
+	closed bool
+}
+
+func newEPQueue() *epQueue {
+	q := &epQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *epQueue) push(j *urbJob) {
+	q.mu.Lock()
+	q.jobs = append(q.jobs, j)
+	q.cond.Signal()
+	q.mu.Unlock()
+}
+
+func (q *epQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	q.cond.Broadcast()
+	q.mu.Unlock()
+}
+
+// pop returns the next job in FIFO order, blocking until one is available;
+// ok is false once the queue is closed and fully drained.
+func (q *epQueue) pop() (*urbJob, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.jobs) == 0 && !q.closed {
+		q.cond.Wait()
+	}
+	if len(q.jobs) == 0 {
+		return nil, false
+	}
+	j := q.jobs[0]
+	q.jobs[0] = nil
+	q.jobs = q.jobs[1:]
+	return j, true
+}
+
 // urbLoop reads URB commands until the connection closes or ctx is cancelled.
-// CMD_SUBMIT requests are dispatched to per-URB goroutines so a blocking IN
-// transfer (e.g. an interrupt endpoint) does not stall other endpoints; the
-// inbound stream itself is always read synchronously to stay frame-aligned.
+// CMD_SUBMIT requests are routed to a per-endpoint worker so transfers on one
+// endpoint complete in submission order — real hardware is FIFO per endpoint and
+// the guest's mt76 RX ring asserts it (out-of-order completions corrupt the ring,
+// stalling firmware load and hanging detach). Different endpoints run on separate
+// workers so a blocking IN on one does not stall another. The inbound stream is
+// read synchronously to stay frame-aligned and responsive to CMD_UNLINK.
 func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 	var writeMu sync.Mutex
 	var stateMu sync.Mutex
 	pending := map[uint32]*inflight{}
+	workers := map[uint32]*epQueue{}
 	var wg sync.WaitGroup
+
+	// Defers run LIFO: wg.Wait (registered first) runs last, after the cleanup
+	// below cancels every in-flight transfer and closes every worker queue so the
+	// workers can exit. Without this, a worker blocked in a gousb IN transfer when
+	// the connection closes (e.g. on detach) would never return, wg.Wait would
+	// hang, and the claimed host device would never be released.
 	defer wg.Wait()
+	defer func() {
+		stateMu.Lock()
+		for _, e := range pending {
+			e.cancel()
+		}
+		for _, q := range workers {
+			q.close()
+		}
+		stateMu.Unlock()
+	}()
+
+	worker := func(q *epQueue) {
+		defer wg.Done()
+		for {
+			job, ok := q.pop()
+			if !ok {
+				return
+			}
+			status, actual, inData := doSubmit(job.ctx, dev, job.h, job.outData)
+
+			stateMu.Lock()
+			unlinked := job.entry.unlinked
+			delete(pending, job.h.Seqnum)
+			stateMu.Unlock()
+			job.entry.cancel()
+			if unlinked {
+				// The guest already cancelled this URB via CMD_UNLINK and
+				// received a RET_UNLINK; do not also send a RET_SUBMIT.
+				continue
+			}
+
+			writeMu.Lock()
+			if err := writeRetSubmit(conn, job.h, status, actual, inData); err != nil {
+				logrus.WithError(err).Debug("usbip: writing ret_submit failed")
+			}
+			writeMu.Unlock()
+		}
+	}
 
 	for {
 		h, err := readURBHeader(conn)
@@ -156,32 +260,27 @@ func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 
 			urbCtx, cancel := context.WithCancel(ctx)
 			entry := &inflight{cancel: cancel}
+
+			// Endpoint 0 is a single bidirectional control pipe (one worker);
+			// every other endpoint number is a distinct IN/OUT pair, so the
+			// direction bit selects a separate worker.
+			key := h.Ep << 1
+			if h.Ep != 0 {
+				key |= h.Direction & 1
+			}
+
 			stateMu.Lock()
 			pending[h.Seqnum] = entry
+			q, ok := workers[key]
+			if !ok {
+				q = newEPQueue()
+				workers[key] = q
+				wg.Add(1)
+				go worker(q)
+			}
 			stateMu.Unlock()
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer cancel()
-				status, actual, inData := doSubmit(urbCtx, dev, h, outData)
-
-				stateMu.Lock()
-				unlinked := entry.unlinked
-				delete(pending, h.Seqnum)
-				stateMu.Unlock()
-				if unlinked {
-					// The guest already cancelled this URB via CMD_UNLINK and
-					// received a RET_UNLINK; do not also send a RET_SUBMIT.
-					return
-				}
-
-				writeMu.Lock()
-				defer writeMu.Unlock()
-				if err := writeRetSubmit(conn, h, status, actual, inData); err != nil {
-					logrus.WithError(err).Debug("usbip: writing ret_submit failed")
-				}
-			}()
+			q.push(&urbJob{ctx: urbCtx, h: h, outData: outData, entry: entry})
 
 		case cmdUnlink:
 			victim := decodeUnlinkSeqnum(h)
