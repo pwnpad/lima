@@ -71,6 +71,7 @@ func newUsbAttachCommand() *cobra.Command {
 	cmd.Flags().String("product", "", "product ID in hex, e.g. 8812")
 	cmd.Flags().String("bus-addr", "", "host bus-address (e.g. 20-3) to disambiguate identical devices")
 	cmd.Flags().String("name", "", "friendly name recorded in the allowlist")
+	cmd.Flags().Bool("force", false, "attach even if the device is already attached to another instance")
 	return cmd
 }
 
@@ -199,6 +200,7 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 	product, _ := flags.GetString("product")
 	busAddr, _ := flags.GetString("bus-addr")
 	name, _ := flags.GetString("name")
+	force, _ := flags.GetBool("force")
 	busid := ""
 	if len(args) > 1 {
 		busid = args[1]
@@ -207,6 +209,20 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 	dev, err := resolveHostDevice(busid, vendor, product, busAddr)
 	if err != nil {
 		return err
+	}
+
+	// A physical USB device can be claimed by only one VM at a time. Refuse if
+	// another running instance already holds it, so the user gets a clear error
+	// instead of an opaque libusb BUSY failure deep in the guest.
+	attachedTo, _, err := usbAttachments(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if holder, ok := attachedTo[dev.Busid]; ok && holder != inst.Name {
+		if !force {
+			return fmt.Errorf("device %s (%04x:%04x) is already attached to instance %q; detach it there first or pass --force", dev.Busid, dev.Vendor, dev.Product, holder)
+		}
+		logrus.Warnf("usb: device %s is already attached to instance %q; attaching anyway (--force)", dev.Busid, holder)
 	}
 
 	list, err := usbip.ReadAllowlist(inst.Dir)
