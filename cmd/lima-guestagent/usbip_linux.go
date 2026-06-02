@@ -70,18 +70,22 @@ func usbipDetachAction(cmd *cobra.Command, _ []string) error {
 func newUsbipPortCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "port",
-		Short: "List vendor:product of devices currently imported onto vhci-hcd",
+		Short: "List vendor:product (and host busid) of devices imported onto vhci-hcd",
 		RunE:  usbipPortAction,
 	}
 }
 
 func usbipPortAction(cmd *cobra.Command, _ []string) error {
-	ids, err := usbip.AttachedVIDPIDs()
+	devs, err := usbip.AttachedDevices()
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		fmt.Fprintln(cmd.OutOrStdout(), id)
+	for _, d := range devs {
+		if d.Busid == "" {
+			fmt.Fprintln(cmd.OutOrStdout(), d.VIDPID)
+			continue
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), d.VIDPID, d.Busid)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ package usbip
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -44,6 +45,77 @@ const (
 // usbipSpeedSuper mirrors the super-speed code; SuperSpeed devices must attach
 // to the controller's "ss" hub, everything else to "hs".
 const usbipSpeedSuper = 5
+
+// portStateDir holds a small map from vhci port number to the host busid that
+// was imported onto it. vhci's own status only exposes the guest-side local
+// busid, so this is the only place the original host busid survives — it lets
+// `usbip port` report which physical host device backs each import, which in
+// turn lets limactl tell identical (same vid:pid) devices apart. Kept on tmpfs:
+// imports do not survive a reboot, so neither should this state.
+const portStateDir = "/run/lima-guestagent"
+
+var portStatePath = filepath.Join(portStateDir, "usbip-ports.json")
+
+// AttachedDevice is one device currently imported onto the guest's vhci-hcd
+// controller: its vendor:product and, when known, the host busid it came from.
+type AttachedDevice struct {
+	VIDPID string
+	Busid  string
+}
+
+// readPortState loads the port -> host busid map. A missing file yields an empty
+// map (no imports recorded yet).
+func readPortState() map[string]string {
+	m := map[string]string{}
+	b, err := os.ReadFile(portStatePath)
+	if err != nil {
+		return m
+	}
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// writePortState atomically persists the port -> host busid map.
+func writePortState(m map[string]string) error {
+	if err := os.MkdirAll(portStateDir, 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(portStateDir, "usbip-ports.*.json")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, portStatePath)
+}
+
+// recordPort remembers that vhci port carries the given host busid.
+func recordPort(port int, busid string) {
+	m := readPortState()
+	m[strconv.Itoa(port)] = busid
+	_ = writePortState(m)
+}
+
+// forgetPort drops the mapping for a vhci port after it is detached.
+func forgetPort(port int) {
+	m := readPortState()
+	if _, ok := m[strconv.Itoa(port)]; !ok {
+		return
+	}
+	delete(m, strconv.Itoa(port))
+	_ = writePortState(m)
+}
 
 // fdConn adapts a raw blocking socket fd to io.ReadWriter so the big-endian
 // protocol helpers in protocol.go can be reused for the import handshake. We
@@ -148,6 +220,7 @@ func AttachBusid(busid string) error {
 		_ = unix.Close(fd)
 		return fmt.Errorf("attaching %s to vhci port %d: %w", busid, port, err)
 	}
+	recordPort(port, busid)
 	// Do not close fd: the kernel now drives USB/IP on it.
 	return nil
 }
@@ -176,22 +249,28 @@ func DetachVIDPID(vidpid string) error {
 	}
 	for _, p := range ports {
 		if p.vidpid == want {
-			return writeSysfs(vhciDetachPath, strconv.Itoa(p.port))
+			if err := writeSysfs(vhciDetachPath, strconv.Itoa(p.port)); err != nil {
+				return err
+			}
+			forgetPort(p.port)
+			return nil
 		}
 	}
 	return fmt.Errorf("device %s is not attached", vidpid)
 }
 
-// AttachedVIDPIDs returns the "vid:pid" of every device currently imported onto
-// the guest's vhci-hcd controller.
-func AttachedVIDPIDs() ([]string, error) {
+// AttachedDevices returns every device currently imported onto the guest's
+// vhci-hcd controller, each as its "vid:pid" plus the host busid it was imported
+// from (empty if the import predates port-state tracking).
+func AttachedDevices() ([]AttachedDevice, error) {
 	ports, err := attachedPorts()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(ports))
+	state := readPortState()
+	out := make([]AttachedDevice, 0, len(ports))
 	for _, p := range ports {
-		out = append(out, p.vidpid)
+		out = append(out, AttachedDevice{VIDPID: p.vidpid, Busid: state[strconv.Itoa(p.port)]})
 	}
 	return out, nil
 }
