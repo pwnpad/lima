@@ -38,8 +38,9 @@ const (
 // vhci port status values (kernel enum usbip_device_status). A port is free
 // when VDEV_ST_NULL and carries an imported device when VDEV_ST_USED.
 const (
-	vdevStNull = 4
-	vdevStUsed = 6
+	vdevStNull  = 4
+	vdevStUsed  = 6
+	vdevStError = 7
 )
 
 // usbipSpeedSuper mirrors the super-speed code; SuperSpeed devices must attach
@@ -178,6 +179,12 @@ func dialHost() (int, error) {
 // socket; the fd is intentionally left open (closed when the process exits,
 // after the kernel has its own reference).
 func AttachBusid(busid string) error {
+	// Reclaim any ports left in VDEV_ST_ERROR by an earlier physical unplug, so a
+	// dead import does not consume a vhci slot and block this attach.
+	if _, err := DetachErrorPorts(); err != nil {
+		fmt.Fprintf(os.Stderr, "usbip: reclaiming errored ports failed: %v\n", err)
+	}
+
 	fd, err := dialHost()
 	if err != nil {
 		return err
@@ -273,6 +280,36 @@ func AttachedDevices() ([]AttachedDevice, error) {
 		out = append(out, AttachedDevice{VIDPID: p.vidpid, Busid: state[strconv.Itoa(p.port)]})
 	}
 	return out, nil
+}
+
+// DetachErrorPorts detaches every vhci port the kernel has marked
+// VDEV_ST_ERROR. A port enters that state when the host server drops its USB/IP
+// connection on a physical unplug, so reclaiming these ports frees the slots a
+// dead import would otherwise hold. Returns the number detached.
+func DetachErrorPorts() (int, error) {
+	lines, err := statusLines()
+	if err != nil {
+		return 0, err
+	}
+	detached := 0
+	for _, f := range lines {
+		if len(f) < 3 {
+			continue
+		}
+		if sta, err := strconv.Atoi(f[2]); err != nil || sta != vdevStError {
+			continue
+		}
+		port, err := strconv.Atoi(f[1])
+		if err != nil {
+			continue
+		}
+		if err := writeSysfs(vhciDetachPath, strconv.Itoa(port)); err != nil {
+			return detached, fmt.Errorf("detaching errored vhci port %d: %w", port, err)
+		}
+		forgetPort(port)
+		detached++
+	}
+	return detached, nil
 }
 
 // hostDevlist performs an OP_REQ_DEVLIST exchange and returns the advertised
