@@ -273,6 +273,23 @@ func (g *gousbDevice) Info() DeviceInfo {
 	return g.info
 }
 
+// Gone reports true when the device's busid no longer appears in a fresh host
+// enumeration, i.e. it was physically unplugged. A device that is present but
+// unresponsive still enumerates, so it is not reported gone. Enumeration errors
+// are treated as "present" to avoid tearing down a session on a transient glitch.
+func (g *gousbDevice) Gone() bool {
+	hosts, err := List()
+	if err != nil {
+		return false
+	}
+	for _, h := range hosts {
+		if h.Busid == g.info.Busid && h.Vendor == g.info.Vendor && h.Product == g.info.Product {
+			return false
+		}
+	}
+	return true
+}
+
 func (g *gousbDevice) Control(ctx context.Context, setup [8]byte, data []byte) (int, error) {
 	n, err := g.control(ctx, setup, data)
 	return n, deviceGoneErr(err)
