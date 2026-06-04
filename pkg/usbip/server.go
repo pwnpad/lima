@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -202,6 +203,27 @@ func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 			_ = c.Close()
 		}()
 	}
+
+	// A failing URB only reveals an unplug while the guest is actively driving the
+	// device, and libusb's error code for a disconnect varies by platform. Poll
+	// host presence directly so an unplug is caught within ~1s even for an idle
+	// device, while an unresponsive-but-present device is left attached.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-sessionCtx.Done():
+				return
+			case <-t.C:
+				if dev.Gone() {
+					logrus.Infof("usbip: host device %s unplugged; ending session", dev.Info().Busid)
+					endSession()
+					return
+				}
+			}
+		}
+	}()
 
 	// Defers run LIFO: wg.Wait (registered first) runs last, after the cleanup
 	// below cancels every in-flight transfer and closes every worker queue so the

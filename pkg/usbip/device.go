@@ -59,6 +59,11 @@ type Device interface {
 	// number. For IN (dirIn), buf is filled and the byte count returned; for OUT,
 	// buf is sent. The backend claims the owning interface on demand.
 	Transfer(ctx context.Context, ep uint8, in bool, buf []byte) (int, error)
+	// Gone reports whether the device has been physically removed from the host
+	// bus. It distinguishes a genuine unplug from a device that is merely
+	// unresponsive (still enumerated), so the server only tears the session down
+	// for a real disconnect.
+	Gone() bool
 	// Close releases the device and any claimed interfaces.
 	Close() error
 }
