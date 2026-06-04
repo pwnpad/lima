@@ -405,7 +405,20 @@ func guestAttachedDevices(ctx context.Context, inst *limatype.Instance) (map[str
 	return byBusid, nil
 }
 
-func usbBashComplete(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+func usbBashComplete(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	// First positional arg is the instance; the second (attach/detach) is a host
+	// busid.
+	if len(args) >= 1 {
+		hosts, err := usbip.List()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		comps := make([]string, 0, len(hosts))
+		for _, h := range hosts {
+			comps = append(comps, fmt.Sprintf("%s\t%04x:%04x", h.Busid, h.Vendor, h.Product))
+		}
+		return comps, cobra.ShellCompDirectiveNoFileComp
+	}
 	return bashCompleteInstanceNames(cmd)
 }
 
