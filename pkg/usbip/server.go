@@ -16,6 +16,7 @@ import (
 
 // Linux errno values reported back to the guest in RET_SUBMIT.status.
 const (
+	errnoENODEV     = 19 // device disconnected (physically unplugged)
 	errnoEPIPE      = 32 // endpoint stalled
 	errnoEOPNOTSUPP = 95 // e.g. isochronous transfers
 	errnoECONNRESET = 104
@@ -189,6 +190,19 @@ func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 	workers := map[uint32]*epQueue{}
 	var wg sync.WaitGroup
 
+	// sessionCtx is cancelled either by the parent ctx or by a worker that finds
+	// the host device unplugged. Cancelling it closes the connection, which
+	// unblocks the read loop below so the whole session tears down; dropping the
+	// vsock socket makes the guest's vhci-hcd release the imported port.
+	sessionCtx, endSession := context.WithCancel(ctx)
+	defer endSession()
+	if c, ok := conn.(io.Closer); ok {
+		go func() {
+			<-sessionCtx.Done()
+			_ = c.Close()
+		}()
+	}
+
 	// Defers run LIFO: wg.Wait (registered first) runs last, after the cleanup
 	// below cancels every in-flight transfer and closes every worker queue so the
 	// workers can exit. Without this, a worker blocked in a gousb IN transfer when
@@ -220,17 +234,22 @@ func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 			delete(pending, job.h.Seqnum)
 			stateMu.Unlock()
 			job.entry.cancel()
-			if unlinked {
-				// The guest already cancelled this URB via CMD_UNLINK and
-				// received a RET_UNLINK; do not also send a RET_SUBMIT.
-				continue
+
+			// The guest already cancelled an unlinked URB via CMD_UNLINK and
+			// received a RET_UNLINK; do not also send a RET_SUBMIT for it.
+			if !unlinked {
+				writeMu.Lock()
+				if err := writeRetSubmit(conn, job.h, status, actual, inData); err != nil {
+					logrus.WithError(err).Debug("usbip: writing ret_submit failed")
+				}
+				writeMu.Unlock()
 			}
 
-			writeMu.Lock()
-			if err := writeRetSubmit(conn, job.h, status, actual, inData); err != nil {
-				logrus.WithError(err).Debug("usbip: writing ret_submit failed")
+			if status == -errnoENODEV {
+				// Host device physically unplugged; end the session so the guest
+				// releases its vhci port rather than retrying a dead device.
+				endSession()
 			}
-			writeMu.Unlock()
 		}
 	}
 
@@ -258,7 +277,7 @@ func urbLoop(ctx context.Context, conn io.ReadWriter, dev Device) error {
 				return fmt.Errorf("urb transfer length %d exceeds limit", h.TransferBufferLength)
 			}
 
-			urbCtx, cancel := context.WithCancel(ctx)
+			urbCtx, cancel := context.WithCancel(sessionCtx)
 			entry := &inflight{cancel: cancel}
 
 			// Endpoint 0 is a single bidirectional control pipe (one worker);
@@ -347,6 +366,10 @@ func doSubmit(ctx context.Context, dev Device, h urbHeader, outData []byte) (sta
 	if err != nil {
 		if ctx.Err() != nil {
 			return -errnoECONNRESET, 0, nil
+		}
+		if errors.Is(err, ErrDeviceGone) {
+			logrus.WithError(err).Debugf("usbip: device gone on ep %d", h.Ep)
+			return -errnoENODEV, 0, nil
 		}
 		logrus.WithError(err).Debugf("usbip: transfer failed on ep %d", h.Ep)
 		return -errnoEPIPE, 0, nil

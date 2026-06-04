@@ -3,7 +3,16 @@
 
 package usbip
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrDeviceGone is wrapped by a backend Device's transfer methods when the
+// physical device has been disconnected from the host. The server uses it to
+// tear the session down (dropping the vsock socket) so the guest's vhci-hcd
+// releases the port instead of leaving a dead import behind.
+var ErrDeviceGone = errors.New("usb device disconnected")
 
 // DeviceInfo describes a USB device well enough to populate the USB/IP
 // OP_REP_DEVLIST and OP_REP_IMPORT replies.
