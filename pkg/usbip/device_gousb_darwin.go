@@ -7,11 +7,30 @@ package usbip
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/google/gousb"
 )
+
+// deviceGoneErr wraps err with ErrDeviceGone when it signals that the physical
+// device has been unplugged (libusb NO_DEVICE / NOT_FOUND), so the server can
+// end the session and let the guest release its vhci port.
+func deviceGoneErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ge gousb.Error
+	if errors.As(err, &ge) && (ge == gousb.ErrorNoDevice || ge == gousb.ErrorNotFound) {
+		return fmt.Errorf("%w: %w", ErrDeviceGone, err)
+	}
+	var ts gousb.TransferStatus
+	if errors.As(err, &ts) && ts == gousb.TransferNoDevice {
+		return fmt.Errorf("%w: %w", ErrDeviceGone, err)
+	}
+	return err
+}
 
 // USB/IP speed codes (see linux/usbip.h: enum usb_device_speed mapping).
 const (
@@ -254,7 +273,12 @@ func (g *gousbDevice) Info() DeviceInfo {
 	return g.info
 }
 
-func (g *gousbDevice) Control(_ context.Context, setup [8]byte, data []byte) (int, error) {
+func (g *gousbDevice) Control(ctx context.Context, setup [8]byte, data []byte) (int, error) {
+	n, err := g.control(ctx, setup, data)
+	return n, deviceGoneErr(err)
+}
+
+func (g *gousbDevice) control(_ context.Context, setup [8]byte, data []byte) (int, error) {
 	rType, request, value, index, _ := controlSetup(setup)
 
 	// Drive configuration/interface state through gousb rather than passing the
@@ -301,6 +325,11 @@ func (g *gousbDevice) setInterface(num, alt int) error {
 }
 
 func (g *gousbDevice) Transfer(ctx context.Context, ep uint8, in bool, buf []byte) (int, error) {
+	n, err := g.transfer(ctx, ep, in, buf)
+	return n, deviceGoneErr(err)
+}
+
+func (g *gousbDevice) transfer(ctx context.Context, ep uint8, in bool, buf []byte) (int, error) {
 	epNum := ep & 0x0f
 	if in {
 		inEp, err := g.inEndpoint(epNum)
