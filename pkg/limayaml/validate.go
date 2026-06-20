@@ -432,7 +432,7 @@ func validateUSBDevices(y *limatype.LimaYAML, warn bool) error {
 			errs = errors.Join(errs, fmt.Errorf("field `usbDevices[%d].productID` must be a 16-bit hex value, got %#q", i, dev.ProductID))
 		}
 	}
-	if warn && len(y.USBDevices) > 0 && *y.VMType != limatype.VZ {
+	if warn && len(y.USBDevices) > 0 && y.VMType != nil && *y.VMType != limatype.VZ {
 		logrus.Warnf("`usbDevices` is only implemented for the vz driver; ignored for vmType %#q", *y.VMType)
 	}
 	return errs
