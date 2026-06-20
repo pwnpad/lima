@@ -13,8 +13,7 @@ import (
 	"github.com/lima-vm/lima/v2/pkg/limatype/filenames"
 )
 
-// AllowEntry is one device the host USB/IP server is permitted to export to the
-// guest. The list is default-deny: only devices present here may be imported.
+// AllowEntry is one device the host USB/IP server is permitted to export.
 type AllowEntry struct {
 	Name      string `json:"name,omitempty"`
 	VendorID  string `json:"vendorID"`
@@ -23,13 +22,10 @@ type AllowEntry struct {
 	Busid     string `json:"busid,omitempty"`
 }
 
-// AllowlistPath returns the allowlist file path for the given instance dir.
 func AllowlistPath(instDir string) string {
 	return filepath.Join(instDir, filenames.USBIPAllowlist)
 }
 
-// ReadAllowlist loads the allowlist for the instance dir. A missing file is not
-// an error; it yields an empty list (default-deny).
 func ReadAllowlist(instDir string) ([]AllowEntry, error) {
 	b, err := os.ReadFile(AllowlistPath(instDir))
 	if err != nil {
@@ -45,7 +41,6 @@ func ReadAllowlist(instDir string) ([]AllowEntry, error) {
 	return entries, nil
 }
 
-// WriteAllowlist atomically persists the allowlist for the instance dir.
 func WriteAllowlist(instDir string, entries []AllowEntry) error {
 	if entries == nil {
 		entries = []AllowEntry{}
@@ -71,10 +66,9 @@ func WriteAllowlist(instDir string, entries []AllowEntry) error {
 	return os.Rename(tmpName, path)
 }
 
-// sameDevice reports whether two entries refer to the same device by identity:
-// vendor/product (case-insensitive) and, when both set, busAddr. Busid is not
-// part of identity — it can change across replug, so a fresh attach replaces the
-// stale entry rather than accumulating duplicates.
+// sameDevice reports whether two entries refer to the same device by
+// vendor/product (case-insensitive) and busAddr (when both set). Busid is not
+// part of identity — it can change across replug.
 func sameDevice(a, b AllowEntry) bool {
 	if !strings.EqualFold(a.VendorID, b.VendorID) || !strings.EqualFold(a.ProductID, b.ProductID) {
 		return false
@@ -85,7 +79,6 @@ func sameDevice(a, b AllowEntry) bool {
 	return true
 }
 
-// Allowed reports whether dev is permitted by the allowlist.
 func Allowed(list []AllowEntry, dev AllowEntry) bool {
 	for _, e := range list {
 		if sameDevice(e, dev) {
@@ -95,8 +88,6 @@ func Allowed(list []AllowEntry, dev AllowEntry) bool {
 	return false
 }
 
-// AddEntry returns list with entry added, replacing any existing match for the
-// same device so the newest busid wins.
 func AddEntry(list []AllowEntry, entry AllowEntry) []AllowEntry {
 	out := make([]AllowEntry, 0, len(list)+1)
 	for _, e := range list {
@@ -107,8 +98,6 @@ func AddEntry(list []AllowEntry, entry AllowEntry) []AllowEntry {
 	return append(out, entry)
 }
 
-// RemoveEntry returns list without any entry matching dev, and whether one was
-// removed.
 func RemoveEntry(list []AllowEntry, dev AllowEntry) ([]AllowEntry, bool) {
 	out := make([]AllowEntry, 0, len(list))
 	removed := false

@@ -2,14 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package usbip implements the server ("stub") side of the USB/IP protocol,
-// backed by libusb (via gousb). It lets a Linux guest import a physical USB
-// device attached to the macOS host onto its vhci-hcd virtual host controller,
-// so the device appears as if natively plugged into the guest.
-//
-// Only control, bulk, and interrupt transfers are supported. Isochronous
-// transfers are rejected. The wire format follows the Linux kernel USB/IP
-// protocol (Documentation/usb/usbip_protocol.rst); all multi-byte integers in
-// the headers are big-endian (network byte order).
+// backed by libusb (via gousb). The wire format follows the Linux kernel
+// USB/IP protocol (Documentation/usb/usbip_protocol.rst); all multi-byte
+// integers are big-endian (network byte order).
 package usbip
 
 import (
@@ -18,10 +13,8 @@ import (
 	"io"
 )
 
-// Protocol version, BCD 1.1.1.
 const protocolVersion = 0x0111
 
-// Operation codes used during the connection (pre-import) phase.
 const (
 	opReqDevlist = 0x8005
 	opRepDevlist = 0x0005
@@ -29,7 +22,6 @@ const (
 	opRepImport  = 0x0003
 )
 
-// Command codes used during the URB phase (after a successful import).
 const (
 	cmdSubmit = 0x00000001
 	retSubmit = 0x00000003
@@ -37,22 +29,17 @@ const (
 	retUnlink = 0x00000004
 )
 
-// URB transfer direction, from the host's perspective.
 const (
 	dirOut = 0
 	dirIn  = 1
 )
 
-// opHeader is the 8-byte header that prefixes every message in the
-// connection phase: version, operation code, and a status field.
 type opHeader struct {
 	Version uint16
 	Code    uint16
 	Status  uint32
 }
 
-// usbDeviceDesc is the on-wire description of a USB device, used in the
-// OP_REP_DEVLIST and OP_REP_IMPORT replies. Total size is 312 bytes.
 type usbDeviceDesc struct {
 	Path                [256]byte
 	Busid               [32]byte
@@ -70,8 +57,6 @@ type usbDeviceDesc struct {
 	BNumInterfaces      uint8
 }
 
-// usbInterfaceDesc is the on-wire description of a single USB interface, only
-// emitted as part of OP_REP_DEVLIST.
 type usbInterfaceDesc struct {
 	BInterfaceClass    uint8
 	BInterfaceSubClass uint8
@@ -79,10 +64,6 @@ type usbInterfaceDesc struct {
 	_                  uint8 // padding
 }
 
-// urbHeader is the fixed 48-byte header of a USBIP_CMD_SUBMIT message. The
-// USBIP_RET_SUBMIT and *_UNLINK messages share the same 48-byte envelope but
-// reinterpret the trailing 28 bytes; this struct covers SUBMIT, which is the
-// only inbound command that carries those fields.
 type urbHeader struct {
 	Command              uint32
 	Seqnum               uint32
@@ -97,7 +78,6 @@ type urbHeader struct {
 	Setup                [8]byte
 }
 
-// urbHeaderSize is the wire size of every URB-phase header (both directions).
 const urbHeaderSize = 48
 
 func toCString(dst []byte, s string) {
@@ -121,10 +101,6 @@ func writeOpHeader(w io.Writer, code uint16, status uint32) error {
 	})
 }
 
-// readURBHeader reads the fixed 48-byte URB envelope and decodes it as a
-// SUBMIT header. The caller must inspect Command to decide how to interpret
-// unlink-specific fields (the Seqnum-to-unlink is carried in TransferFlags'
-// position for UNLINK; see decodeUnlinkSeqnum).
 func readURBHeader(r io.Reader) (urbHeader, error) {
 	var buf [urbHeaderSize]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
@@ -145,16 +121,10 @@ func readURBHeader(r io.Reader) (urbHeader, error) {
 	return h, nil
 }
 
-// decodeUnlinkSeqnum extracts the seqnum-to-cancel from a USBIP_CMD_UNLINK
-// envelope. In UNLINK the field at offset 20 holds the victim seqnum, which
-// readURBHeader parses into TransferFlags.
 func decodeUnlinkSeqnum(h urbHeader) uint32 {
 	return h.TransferFlags
 }
 
-// writeRetSubmit writes a USBIP_RET_SUBMIT header followed by the inbound
-// transfer buffer (for IN transfers). status uses Linux errno conventions
-// (0 == success, negative == -errno).
 func writeRetSubmit(w io.Writer, h urbHeader, status, actualLength int32, data []byte) error {
 	var buf [urbHeaderSize]byte
 	binary.BigEndian.PutUint32(buf[0:], retSubmit)
@@ -177,7 +147,6 @@ func writeRetSubmit(w io.Writer, h urbHeader, status, actualLength int32, data [
 	return nil
 }
 
-// writeRetUnlink writes a USBIP_RET_UNLINK header with the given errno status.
 func writeRetUnlink(w io.Writer, h urbHeader, status int32) error {
 	var buf [urbHeaderSize]byte
 	binary.BigEndian.PutUint32(buf[0:], retUnlink)
@@ -190,9 +159,6 @@ func writeRetUnlink(w io.Writer, h urbHeader, status int32) error {
 	return err
 }
 
-// controlSetup decodes the 8-byte SETUP packet of a control transfer into the
-// argument shape expected by libusb/gousb. wValue and wIndex are little-endian
-// in the SETUP packet.
 func controlSetup(setup [8]byte) (rType, request uint8, value, index, length uint16) {
 	rType = setup[0]
 	request = setup[1]

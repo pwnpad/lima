@@ -17,16 +17,9 @@ import (
 	"github.com/lima-vm/lima/v2/pkg/usbip"
 )
 
-// usbipVsockPort is the guest-facing vsock port the host USB/IP server listens
-// on. The guest bridges its local TCP usbip client to this port (see the
-// cidata usbip boot script).
 const usbipVsockPort = 2223
 
-// startUSBIPServer serves host USB devices to the guest over vsock using the
-// USB/IP protocol. It runs whenever vz USB is enabled (usb: true) or any
-// usbDevices are configured, so a later live attach has transport ready. The
-// exportable set is the instance allowlist file, re-read per request and opened
-// lazily at import time; usbDevices seeds that file at start.
+// startUSBIPServer serves allowed host USB devices to the guest over vsock.
 func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *limatype.Instance) error {
 	enabled := (inst.Config.USB != nil && *inst.Config.USB) || len(inst.Config.USBDevices) > 0
 	if !enabled {
@@ -47,9 +40,6 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 		return fmt.Errorf("listening on vsock port %d: %w", usbipVsockPort, err)
 	}
 
-	// Tie the server lifetime to a cancelable context so the VM stop handler can
-	// release the vsock listener and any open host USB device handles before the
-	// driver process exits (graceful teardown rather than relying on exit alone).
 	ctx, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
 	m.usbipCancel = cancel
@@ -72,8 +62,6 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 			}
 			go func() {
 				defer conn.Close()
-				// Close the conn on cancel so a session blocked reading URBs
-				// unblocks and releases its host USB device handle.
 				go func() {
 					<-ctx.Done()
 					_ = conn.Close()
@@ -89,9 +77,6 @@ func (m *virtualMachineWrapper) startUSBIPServer(ctx context.Context, inst *lima
 	return nil
 }
 
-// seedAllowlist merges the YAML usbDevices into the instance allowlist file so
-// configured devices are exportable from boot. Live attaches append to the same
-// file later. Existing entries (e.g. from a prior live attach) are preserved.
 func seedAllowlist(inst *limatype.Instance) error {
 	if len(inst.Config.USBDevices) == 0 {
 		return nil

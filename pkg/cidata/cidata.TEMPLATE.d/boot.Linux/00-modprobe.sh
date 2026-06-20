@@ -24,9 +24,7 @@ for f in \
 	fi
 done
 
-# vhci-hcd is the virtual USB host controller used to import host USB devices
-# over USB/IP. Only load it for the vz driver, which runs the host USB/IP
-# server; qemu does its own USB passthrough and never starts that server.
+# vhci-hcd is the virtual USB host controller for USB/IP import.
 if [ "${LIMA_CIDATA_VMTYPE}" = "vz" ] && { [ "${LIMA_CIDATA_USB_ENABLED:-0}" = "1" ] || [ "${LIMA_CIDATA_USB_DEVICES:-0}" -gt 0 ]; }; then
 	echo "Loading kernel module \"vhci-hcd\""
 	if ! modprobe vhci-hcd; then

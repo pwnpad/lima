@@ -14,9 +14,6 @@ import (
 	"github.com/google/gousb"
 )
 
-// deviceGoneErr wraps err with ErrDeviceGone when it signals that the physical
-// device has been unplugged (libusb NO_DEVICE / NOT_FOUND), so the server can
-// end the session and let the guest release its vhci port.
 func deviceGoneErr(err error) error {
 	if err == nil {
 		return nil
@@ -41,7 +38,6 @@ const (
 	usbipSpeedSuper   = 5
 )
 
-// Standard control-request constants used to intercept configuration changes.
 const (
 	reqSetConfiguration = 0x09
 	reqSetInterface     = 0x0b
@@ -59,8 +55,6 @@ type gousbDevice struct {
 	outEps map[uint8]*gousb.OutEndpoint
 }
 
-// Open finds and opens the host USB device matching vendorID/productID (and, if
-// non-empty, the "<bus>-<addr>" busAddr), returning a USB/IP-servable handle.
 func Open(vendorID, productID uint16, busAddr string) (Device, error) {
 	gctx := gousb.NewContext()
 	devs, err := gctx.OpenDevices(func(d *gousb.DeviceDesc) bool {
@@ -85,13 +79,8 @@ func Open(vendorID, productID uint16, busAddr string) (Device, error) {
 		_ = extra.Close()
 	}
 
-	// Do NOT enable gousb autodetach: on macOS libusb_detach_kernel_driver
-	// triggers a whole-device IOKit capture that needs root or the
-	// com.apple.vm.device-access entitlement, and gousb's Config() detaches
-	// every interface unconditionally. Driverless devices (no kernel driver
-	// bound to their interfaces) can be claimed without it; devices that a
-	// macOS driver holds will fail claim with LIBUSB_ERROR_BUSY and need a
-	// privileged host server.
+	// Do NOT enable gousb autodetach: on macOS it needs root or the
+	// com.apple.vm.device-access entitlement.
 
 	g := &gousbDevice{
 		gctx:   gctx,
@@ -104,8 +93,6 @@ func Open(vendorID, productID uint16, busAddr string) (Device, error) {
 	return g, nil
 }
 
-// allowEntryFor converts a host DeviceInfo into the identity form used to match
-// against the allowlist (vendor/product hex plus busid for disambiguation).
 func allowEntryFor(info DeviceInfo) AllowEntry {
 	return AllowEntry{
 		VendorID:  fmt.Sprintf("%04x", info.Vendor),
@@ -114,14 +101,10 @@ func allowEntryFor(info DeviceInfo) AllowEntry {
 	}
 }
 
-// allowlistProvider serves only the host devices permitted by the instance's
-// allowlist file, re-read on every call so live changes take effect without a
-// restart. It opens devices lazily, at import time.
 type allowlistProvider struct {
 	instDir string
 }
 
-// NewProvider returns a Provider backed by the instance's USB/IP allowlist file.
 func NewProvider(instDir string) Provider {
 	return &allowlistProvider{instDir: instDir}
 }
@@ -183,15 +166,12 @@ func mapSpeed(s gousb.Speed) uint32 {
 	}
 }
 
-// List enumerates the USB devices currently present on the host without
-// claiming them. The OpenDevices filter returns false for every device, so each
-// is inspected (via its descriptor) but never opened.
 func List() ([]DeviceInfo, error) {
 	gctx := gousb.NewContext()
 	defer gctx.Close()
 	var out []DeviceInfo
 	if _, err := gctx.OpenDevices(func(d *gousb.DeviceDesc) bool {
-		out = append(out, infoFromDesc(d)) // returning false: never opened
+		out = append(out, infoFromDesc(d))
 		return false
 	}); err != nil {
 		return out, err
@@ -199,11 +179,6 @@ func List() ([]DeviceInfo, error) {
 	return out, nil
 }
 
-// ListNamed enumerates host USB devices like List, additionally filling
-// VendorName/ProductName from the iManufacturer/iProduct string descriptors.
-// Reading those descriptors requires opening the device handle (no interface
-// claim, so no privilege); devices that fail to open or lack the strings keep
-// empty names.
 func ListNamed() ([]DeviceInfo, error) {
 	gctx := gousb.NewContext()
 	defer gctx.Close()
@@ -273,10 +248,6 @@ func (g *gousbDevice) Info() DeviceInfo {
 	return g.info
 }
 
-// Gone reports true when the device's busid no longer appears in a fresh host
-// enumeration, i.e. it was physically unplugged. A device that is present but
-// unresponsive still enumerates, so it is not reported gone. Enumeration errors
-// are treated as "present" to avoid tearing down a session on a transient glitch.
 func (g *gousbDevice) Gone() bool {
 	hosts, err := List()
 	if err != nil {
@@ -298,8 +269,6 @@ func (g *gousbDevice) Control(ctx context.Context, setup [8]byte, data []byte) (
 func (g *gousbDevice) control(_ context.Context, setup [8]byte, data []byte) (int, error) {
 	rType, request, value, index, _ := controlSetup(setup)
 
-	// Drive configuration/interface state through gousb rather than passing the
-	// raw control transfer to libusb, which tracks this state itself.
 	if rType == 0x00 && request == reqSetConfiguration {
 		return 0, g.setConfiguration(int(value))
 	}
@@ -398,8 +367,6 @@ func (g *gousbDevice) outEndpoint(epNum uint8) (*gousb.OutEndpoint, error) {
 	return e, nil
 }
 
-// claimEndpointInterfaceLocked finds the interface owning the bulk/interrupt
-// endpoint with number epNum and direction, claiming it if not already held.
 func (g *gousbDevice) claimEndpointInterfaceLocked(epNum uint8, in bool) (*gousb.Interface, error) {
 	if err := g.ensureConfigLocked(); err != nil {
 		return nil, err
@@ -449,8 +416,6 @@ func (g *gousbDevice) ensureConfigLocked() error {
 }
 
 func (g *gousbDevice) dropEndpointsLocked(intfNum int) {
-	// Endpoints belonging to the released interface can no longer be used; drop
-	// the cache entries so they are re-opened against a freshly claimed interface.
 	if g.cfg == nil {
 		return
 	}

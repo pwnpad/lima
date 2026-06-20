@@ -96,8 +96,6 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := cmd.Context()
-	// attachedTo maps "vid:pid" -> the instance that currently has the device
-	// imported; names maps it -> the friendly name from that instance's allowlist.
 	attachedTo, names, err := usbAttachments(ctx, args)
 	if err != nil {
 		return err
@@ -107,7 +105,7 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "BUSID\tVID:PID\tVENDOR\tPRODUCT\tNAME\tATTACHED TO")
 	for _, h := range hosts {
 		at, nm := attachedTo[h.Busid], names[h.Busid]
-		if at == "" { // tolerate imports that predate host-busid reporting
+		if at == "" {
 			vidpid := strings.ToLower(fmt.Sprintf("%04x:%04x", h.Vendor, h.Product))
 			at, nm = attachedTo[vidpid], names[vidpid]
 		}
@@ -119,11 +117,6 @@ func usbListAction(cmd *cobra.Command, args []string) error {
 	return w.Flush()
 }
 
-// usbAttachments scans the candidate instances (a single one when args names it,
-// otherwise every instance) and returns, keyed by host busid, the instance
-// currently holding each device and its friendly name from that instance's
-// allowlist. Keying by busid (rather than vid:pid) lets identical devices be
-// told apart.
 func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[string]string, err error) {
 	attachedTo = map[string]string{}
 	names = map[string]string{}
@@ -155,7 +148,7 @@ func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[s
 		}
 		for busid, vidpid := range attached {
 			if _, seen := attachedTo[busid]; seen {
-				continue // first match wins; a physical device attaches to one VM
+				continue
 			}
 			attachedTo[busid] = inst.Name
 			vid, pid, ok := strings.Cut(vidpid, ":")
@@ -163,7 +156,7 @@ func usbAttachments(ctx context.Context, args []string) (attachedTo, names map[s
 				continue
 			}
 			dev := usbip.AllowEntry{VendorID: vid, ProductID: pid}
-			if busid != vidpid { // a real busid, not the vid:pid fallback
+			if busid != vidpid {
 				dev.BusAddr = busid
 				dev.Busid = busid
 			}
@@ -211,9 +204,6 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// A physical USB device can be claimed by only one VM at a time. Refuse if
-	// another running instance already holds it, so the user gets a clear error
-	// instead of an opaque libusb BUSY failure deep in the guest.
 	attachedTo, _, err := usbAttachments(ctx, nil)
 	if err != nil {
 		return err
@@ -291,8 +281,6 @@ func usbDetachAction(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveHostDevice locates the host USB device identified either by busid or by
-// vendor/product (optionally disambiguated by bus-addr).
 func resolveHostDevice(busid, vendor, product, busAddr string) (usbip.DeviceInfo, error) {
 	hosts, err := usbip.List()
 	if err != nil {
@@ -337,8 +325,6 @@ func resolveHostDevice(busid, vendor, product, busAddr string) (usbip.DeviceInfo
 	}
 }
 
-// isVZUSBRunning reports whether the instance is a running vz instance with USB
-// passthrough enabled — the precondition for any live USB operation.
 func isVZUSBRunning(inst *limatype.Instance) bool {
 	if inst.Config.VMType == nil || *inst.Config.VMType != limatype.VZ {
 		return false
@@ -365,8 +351,6 @@ func requireVZUSBInstance(ctx context.Context, name string) (*limatype.Instance,
 	return inst, nil
 }
 
-// guestAgentBin returns the absolute path to the guest agent binary inside the
-// instance, honoring the configured install prefix.
 func guestAgentBin(inst *limatype.Instance) string {
 	prefix := "/usr/local"
 	if inst.Config.GuestInstallPrefix != nil {
@@ -376,9 +360,7 @@ func guestAgentBin(inst *limatype.Instance) string {
 }
 
 // guestAttachedDevices returns, keyed by host busid, the "vid:pid" of every
-// device currently imported in the guest (the guest agent's `usbip port` prints
-// "vid:pid busid" per line). Lines that predate host-busid reporting carry no
-// busid and are keyed by their vid:pid instead, so they still surface.
+// device currently imported in the guest.
 func guestAttachedDevices(ctx context.Context, inst *limatype.Instance) (map[string]string, error) {
 	out, err := runGuestCommand(ctx, inst, guestAgentBin(inst)+" usbip port")
 	if err != nil {
@@ -406,8 +388,6 @@ func guestAttachedDevices(ctx context.Context, inst *limatype.Instance) (map[str
 }
 
 func usbBashComplete(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
-	// First positional arg is the instance; the second (attach/detach) is a host
-	// busid.
 	if len(args) >= 1 {
 		hosts, err := usbip.List()
 		if err != nil {
@@ -422,8 +402,6 @@ func usbBashComplete(cmd *cobra.Command, args []string, _ string) ([]string, cob
 	return bashCompleteInstanceNames(cmd)
 }
 
-// runGuestCommand runs a single command in the instance over SSH and returns its
-// combined output.
 func runGuestCommand(ctx context.Context, inst *limatype.Instance, command string) (string, error) {
 	sshExe, err := sshutil.NewSSHExe()
 	if err != nil {
