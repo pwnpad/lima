@@ -287,6 +287,15 @@ endif
 # calls the native resolver library and not the simplistic version in the Go library.
 ENVS__output/bin/limactl$(exe) = CGO_ENABLED=1 GOOS="$(GOOS)" GOARCH="$(GOARCH)" CC="$(CC)"
 
+# On macOS, cross-compiling (e.g., building amd64 on arm64) requires
+# architecture-specific C libraries (libusb). These flags direct the
+# CGo toolchain to the x86_64 versions installed under /usr/local.
+ifeq ($(GOOS),darwin)
+ifneq ($(GOARCH),$(GOHOSTARCH))
+ENVS__output/bin/limactl$(exe) += CGO_CFLAGS="$(CGO_CFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)"
+endif
+endif
+
 LIMACTL_DRIVER_TAGS :=
 ifneq (,$(findstring vz,$(ADDITIONAL_DRIVERS)))
 LIMACTL_DRIVER_TAGS += external_vz
@@ -702,6 +711,16 @@ CC := $(shell \
 	else \
 		echo gcc; \
 	fi)
+endif
+
+# On macOS, cross-compiling (e.g., amd64 on arm64) requires
+# architecture-specific CGo flags so the linker finds the right libusb.
+# The x86_64 libusb is expected under /usr/local (built from source in CI).
+ifeq ($(GOOS),darwin)
+ifneq ($(GOARCH),$(GOHOSTARCH))
+CGO_CFLAGS = -I/usr/local/include/libusb-1.0
+CGO_LDFLAGS = -L/usr/local/lib
+endif
 endif
 
 # artifacts: artifacts-$(GOOS)
