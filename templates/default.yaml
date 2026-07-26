@@ -664,6 +664,26 @@ nestedVirtualization: null
 # 🟢 Builtin default: false
 tpm: null
 
+# EXPERIMENTAL
+# Enable USB device passthrough to the guest. Requires `vmType: vz`.
+# When enabled, USB devices matching entries in `usbDevices` are passed through
+# to the guest via USB/IP.
+# 🟢 Builtin default: false
+usb: null
+
+# List of physical USB devices to pass through to the guest.
+# Each entry identifies a device by its vendor and product ID (in hex).
+# Requires `usb: true` and `vmType: vz`.
+#
+# 🟢 Builtin default: []
+# usbDevices:
+# - vendorID: "0bda"
+#   productID: "8812"
+#   # Optional human-readable name (used only for logs)
+#   name: "USB WiFi Adapter"
+#   # Optional bus address to disambiguate between identical devices, e.g. "20-3"
+#   busAddr: "20-3"
+
 # ===================================================================== #
 # GLOBAL DEFAULTS AND OVERRIDES
 # ===================================================================== #
