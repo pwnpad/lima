@@ -71,7 +71,6 @@ func newUsbAttachCommand() *cobra.Command {
 	cmd.Flags().String("product", "", "product ID in hex, e.g. 8812")
 	cmd.Flags().String("bus-addr", "", "host bus-address (e.g. 20-3) to disambiguate identical devices")
 	cmd.Flags().String("name", "", "friendly name recorded in the allowlist")
-	cmd.Flags().Bool("force", false, "attach even if the device is already attached to another instance")
 	return cmd
 }
 
@@ -193,7 +192,6 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 	product, _ := flags.GetString("product")
 	busAddr, _ := flags.GetString("bus-addr")
 	name, _ := flags.GetString("name")
-	force, _ := flags.GetBool("force")
 	busid := ""
 	if len(args) > 1 {
 		busid = args[1]
@@ -209,10 +207,35 @@ func usbAttachAction(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if holder, ok := attachedTo[dev.Busid]; ok && holder != inst.Name {
-		if !force {
-			return fmt.Errorf("device %s (%04x:%04x) is already attached to instance %q; detach it there first or pass --force", dev.Busid, dev.Vendor, dev.Product, holder)
+		return fmt.Errorf("device %s (%04x:%04x) is already attached to instance %q; detach it there first", dev.Busid, dev.Vendor, dev.Product, holder)
+	}
+
+	// Check on-disk allowlists of all instances to prevent the same
+	// device from being attached to multiple VMs (including stopped ones).
+	instances, err := store.Instances()
+	if err != nil {
+		return err
+	}
+	devEntry := usbip.AllowEntry{
+		VendorID:  fmt.Sprintf("%04x", dev.Vendor),
+		ProductID: fmt.Sprintf("%04x", dev.Product),
+		BusAddr:   dev.Busid,
+	}
+	for _, otherName := range instances {
+		if otherName == inst.Name {
+			continue
 		}
-		logrus.Warnf("usb: device %s is already attached to instance %q; attaching anyway (--force)", dev.Busid, holder)
+		otherInst, err := store.Inspect(ctx, otherName)
+		if err != nil {
+			continue
+		}
+		otherList, err := usbip.ReadAllowlist(otherInst.Dir)
+		if err != nil {
+			continue
+		}
+		if usbip.Allowed(otherList, devEntry) {
+			return fmt.Errorf("device %s (%04x:%04x) is already declared for instance %q; detach it there first", dev.Busid, dev.Vendor, dev.Product, otherName)
+		}
 	}
 
 	list, err := usbip.ReadAllowlist(inst.Dir)
