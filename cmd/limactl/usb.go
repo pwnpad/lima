@@ -389,13 +389,17 @@ func guestAttachedDevices(ctx context.Context, inst *limatype.Instance) (map[str
 
 func usbBashComplete(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	if len(args) >= 1 {
-		hosts, err := usbip.List()
+		hosts, err := usbip.ListNamed()
 		if err != nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
 		}
 		comps := make([]string, 0, len(hosts))
 		for _, h := range hosts {
-			comps = append(comps, fmt.Sprintf("%s\t%04x:%04x", h.Busid, h.Vendor, h.Product))
+			desc := h.ProductName
+			if desc == "" {
+				desc = fmt.Sprintf("%04x:%04x", h.Vendor, h.Product)
+			}
+			comps = append(comps, fmt.Sprintf("%s\t%s", h.Busid, desc))
 		}
 		return comps, cobra.ShellCompDirectiveNoFileComp
 	}

@@ -259,7 +259,8 @@ func inferSpeed(desc usb.DeviceDescriptor) uint32 {
 }
 
 func busidLocationID(loc uint32) string {
-	return fmt.Sprintf("iokit-0x%08x", loc)
+	bus := (loc >> 24) & 0xFF
+	return fmt.Sprintf("%d-0x%08x", bus, loc)
 }
 
 func deviceDescToInfo(desc usb.DeviceDescriptor, bus uint8, addr uint8, locationID uint32) DeviceInfo {
