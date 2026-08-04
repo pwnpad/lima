@@ -34,10 +34,10 @@ require (
 	github.com/foxcpp/go-mockdns v1.2.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/google/go-cmp v0.7.0
-	github.com/google/gousb v1.1.3 // gomodjail:unconfined
 	github.com/google/yamlfmt v0.21.0
 	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048
 	github.com/invopop/jsonschema v0.14.0
+	github.com/kevmo314/go-usb v1.0.0 // gomodjail:unconfined
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mattn/go-shellwords v1.0.14
 	github.com/mdlayher/netlink v1.11.2
@@ -130,3 +130,5 @@ require (
 	// gomodjail:unconfined
 	gvisor.dev/gvisor v0.0.0-20240916094835-a174eb65023f // indirect
 )
+
+replace github.com/kevmo314/go-usb => ../go-usb

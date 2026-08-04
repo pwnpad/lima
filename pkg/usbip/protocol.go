@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package usbip implements the server ("stub") side of the USB/IP protocol,
-// backed by libusb (via gousb). The wire format follows the Linux kernel
+// backed by IOKit (via go-usb). The wire format follows the Linux kernel
 // USB/IP protocol (Documentation/usb/usbip_protocol.rst); all multi-byte
 // integers are big-endian (network byte order).
 package usbip

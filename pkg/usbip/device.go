@@ -36,7 +36,7 @@ type InterfaceInfo struct {
 }
 
 // Device is the host-side handle the USB/IP server relays guest URBs to,
-// implemented by the gousb/libusb backend.
+// implemented by the IOKit (go-usb) backend on macOS.
 type Device interface {
 	Info() DeviceInfo
 	// Control performs a control transfer on endpoint 0. setup is the raw
