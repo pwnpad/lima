@@ -37,7 +37,6 @@ require (
 	github.com/google/yamlfmt v0.21.0
 	github.com/inetaf/tcpproxy v0.0.0-20250222171855-c4b9df066048
 	github.com/invopop/jsonschema v0.14.0
-	github.com/kevmo314/go-usb v1.0.0 // gomodjail:unconfined
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mattn/go-shellwords v1.0.14
 	github.com/mdlayher/netlink v1.11.2
@@ -129,6 +128,5 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	// gomodjail:unconfined
 	gvisor.dev/gvisor v0.0.0-20240916094835-a174eb65023f // indirect
+	github.com/kevmo314/go-usb v0.0.0-20260324163000-552ce6d96397
 )
-
-replace github.com/kevmo314/go-usb => ../go-usb

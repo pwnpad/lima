@@ -303,7 +303,22 @@ endif
 GO_BUILDTAGS ?=
 GO_BUILDTAGS_LIMACTL := $(strip $(GO_BUILDTAGS) $(LIMACTL_DRIVER_TAGS))
 
-_output/bin/limactl$(exe): $(LIMACTL_DEPS) $$(call force_build,$$@)
+# github.com/kevmo314/go-usb: transfer_darwin.go redeclares ErrTimeout
+# (also in usb.go). Remove the duplicate from the module cache.
+.PHONY: fix-go-usb-timeout
+fix-go-usb-timeout:
+	@$(GO) mod download github.com/kevmo314/go-usb
+	@GOMODCACHE=$$($(GO) env GOMODCACHE); \
+	VERSION=$$($(GO) list -m -f '{{.Version}}' github.com/kevmo314/go-usb); \
+	DIR="$$GOMODCACHE/github.com/kevmo314/go-usb@$$VERSION"; \
+	TARGET="$$DIR/transfer_darwin.go"; \
+	if [ -f "$$TARGET" ] && grep -q 'var ErrTimeout = fmt.Errorf("transfer timed out")' "$$TARGET"; then \
+		chmod -R u+w "$$DIR"; \
+		sed -i '' '/var ErrTimeout = fmt\.Errorf("transfer timed out")/d' "$$TARGET"; \
+		$(GO) clean -cache; \
+	fi
+
+_output/bin/limactl$(exe): $(LIMACTL_DEPS) fix-go-usb-timeout $$(call force_build,$$@)
 ifneq ($(GOOS),windows) #
 	@rm -rf _output/bin/limactl.exe
 else
